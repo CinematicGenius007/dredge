@@ -203,14 +203,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_paths() {
-        assert_eq!(lexical_clean("c:/server/logs/../code/"), r"C:\server\code");
+        assert_eq!(lexical_clean("c:/work/logs/../code/"), r"C:\work\code");
         assert_eq!(lexical_clean("C:\\"), r"C:\");
-        assert_eq!(absolutize(".", r"C:\server\logs"), r"C:\server\logs");
-        assert_eq!(absolutize("..\\code", r"C:\server\logs"), r"C:\server\code");
+        assert_eq!(absolutize(".", r"C:\work\logs"), r"C:\work\logs");
+        assert_eq!(absolutize("..\\code", r"C:\work\logs"), r"C:\work\code");
         assert_eq!(absolutize(r"\temp", r"D:\x"), r"D:\temp");
         assert_eq!(strip_verbatim(r"\\?\C:\a"), r"C:\a");
-        assert!(covers(r"C:\server", r"c:\SERVER\logs", true));
-        assert!(!covers(r"C:\server", r"C:\serverx", true));
+        assert!(covers(r"C:\work", r"c:\WORK\logs", true));
+        assert!(!covers(r"C:\work", r"C:\workx", true));
     }
 
     #[cfg(unix)]

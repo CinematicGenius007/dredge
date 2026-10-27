@@ -287,11 +287,11 @@ Tools map 1:1 to Engine methods and return the same envelope as compact JSON tex
 ### Focus roots
 
 `DREDGE_FOCUS_ROOTS` (a platform path list: `;` on Windows, `:` elsewhere; nothing is
-hard-coded) names the roots agents mostly work in, e.g. `C:\server;C:\`. It changes three
+hard-coded) names the roots agents mostly work in, e.g. `C:\work;C:\`. It changes three
 things: `volumes` reports each root's scan state and snapshot age (`summary.focus`);
 `disk_scan` / `dredge scan` with no path scans them in order; and the MCP server
 instructions point agents at `disk_volumes` first. Queries are not restricted to focus
-roots, and the newest snapshot that covers a path answers it (so scanning `C:\server`
+roots, and the newest snapshot that covers a path answers it (so scanning `C:\work`
 after `C:\` gives that subtree fresher data without a full rescan).
 
 ## 10. Extension points (interfaces only)

@@ -91,7 +91,7 @@ the mount exists.
 `summary`: `{ "volumes": 2, "data_dir": "C:\\Users\\me\\AppData\\Local\\dredge", "focus": [...] }`
 
 `focus` is present only when `DREDGE_FOCUS_ROOTS` is set: one entry per configured root,
-`{ "path": "C:\\server", "scanned": true, "snapshot_age_secs": 5231, "covered_by": "C:\\" }`.
+`{ "path": "C:\\work", "scanned": true, "snapshot_age_secs": 5231, "covered_by": "C:\\" }`.
 `scanned` is true when any snapshot covers the path; `covered_by` names the covering
 snapshot's root when it is not the focus root itself; `snapshot_age_secs` is omitted when
 not scanned. This is how an agent learns, in one call, what is indexed and how stale it is.
@@ -239,7 +239,7 @@ For a hard-linked file, the record has `hard_links` and, on an alias, flag
 
 ```json
 { "schema_version": 1, "kind": "job", "records": [],
-  "summary": { "job_id": "scan-1", "state": "running", "roots": ["C:\\server", "C:\\"],
+  "summary": { "job_id": "scan-1", "state": "running", "roots": ["C:\\work", "C:\\"],
                "elapsed_ms": 3 } }
 ```
 

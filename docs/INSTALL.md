@@ -7,7 +7,7 @@ section below.
 ## First install
 
 ```powershell
-cd C:\Users\ayush\personal_projects\dredge
+cd C:\path\to\dredge
 cargo install --path crates\dredge-cli
 dredge --version
 ```
@@ -17,13 +17,13 @@ This builds an optimized binary and puts `dredge.exe` in `~\.cargo\bin`.
 Register it as an MCP server for Claude Code, with your focus roots:
 
 ```powershell
-claude mcp add dredge --scope user -e "DREDGE_FOCUS_ROOTS=C:\server;C:\" -- "$env:USERPROFILE\.cargo\bin\dredge.exe" mcp
+claude mcp add dredge --scope user -e "DREDGE_FOCUS_ROOTS=C:\work;C:\" -- "$env:USERPROFILE\.cargo\bin\dredge.exe" mcp
 ```
 
 Scan the focus roots once so agents have data on their first call:
 
 ```powershell
-$env:DREDGE_FOCUS_ROOTS = "C:\server;C:\"
+$env:DREDGE_FOCUS_ROOTS = "C:\work;C:\"
 dredge scan
 ```
 
@@ -44,7 +44,7 @@ This happens on **every** reinstall while any session that uses dredge is open. 
 ### The script (does Option A or B for you)
 
 ```powershell
-cd C:\Users\ayush\personal_projects\dredge
+cd C:\path\to\dredge
 .\scripts\update.ps1          # rename the running exe aside, then install (sessions keep running)
 .\scripts\update.ps1 -Stop    # end every dredge process first, then install
 .\scripts\update.ps1 -Pull    # git pull --ff-only first (combine with either)
@@ -71,7 +71,7 @@ Get-ChildItem $bin -Filter "dredge.old*.exe" | ForEach-Object {
 
 # Move the running exe out of the way, then install the new one
 Rename-Item "$bin\dredge.exe" "dredge.old.$(Get-Date -Format HHmmss).exe"
-cd C:\Users\ayush\personal_projects\dredge
+cd C:\path\to\dredge
 cargo install --path crates\dredge-cli
 dredge --version
 ```
@@ -138,7 +138,7 @@ on macOS (or `DREDGE_DATA_DIR` if set).
 Get-ChildItem "$env:USERPROFILE\.cargo\bin" -Filter "dredge.old*.exe" | Remove-Item
 
 # Build output inside the repo (rebuilt on demand)
-cd C:\Users\ayush\personal_projects\dredge
+cd C:\path\to\dredge
 cargo clean
 ```
 
