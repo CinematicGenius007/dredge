@@ -24,7 +24,8 @@ and Linux.
 - `crates/dredge-cli`: the `dredge` binary. Parses arguments, calls `Engine`, prints JSON.
 - `crates/dredge-mcp`: the MCP server (`dredge mcp`). Tool handlers call `Engine`; background scans
   live in `jobs.rs`.
-- `docs/`: `ARCHITECTURE.md`, `OUTPUT_SCHEMA.md` (the contract), `BENCHMARKS.md`.
+- `docs/`: `ARCHITECTURE.md`, `OUTPUT_SCHEMA.md` (the contract), `BENCHMARKS.md`, `INSTALL.md`
+  (install, MCP registration, upgrading while sessions hold the exe open).
 
 ## Rules
 
