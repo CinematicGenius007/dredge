@@ -1,0 +1,19 @@
+[package]
+name = "dredge-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+zstd.workspace = true
+sysinfo.workspace = true
+dirs.workspace = true
+rustc-hash.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
