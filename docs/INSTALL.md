@@ -1,7 +1,8 @@
-# Installing and upgrading dredge (Windows)
+# Installing and upgrading dredge
 
-All commands are PowerShell. If `cargo` is not found, open a new terminal so `PATH` picks up
-`~\.cargo\bin`.
+The sections up to "macOS and Linux" are for Windows and use PowerShell. If `cargo` is not
+found, open a new terminal so `PATH` picks up `~\.cargo\bin`. macOS and Linux have their own
+section below.
 
 ## First install
 
@@ -98,6 +99,37 @@ Get-Process dredge | Select-Object Id, StartTime, Path
 
 A session started after the upgrade runs the new binary. A session started before it still runs
 the old one.
+
+## macOS and Linux
+
+Not yet tested on a real macOS or Linux machine; CI builds and tests there on every push.
+
+Install Rust with `rustup` (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`,
+then `rustup set profile minimal` and `rustup component add clippy rustfmt`). On Linux you also
+need a C compiler (`build-essential` on Debian/Ubuntu), because `zstd` compiles C code; macOS
+needs the Xcode command line tools (`xcode-select --install`).
+
+```bash
+cd /path/to/dredge
+cargo install --path crates/dredge-cli
+dredge --version
+
+claude mcp add dredge --scope user -e "DREDGE_FOCUS_ROOTS=/srv/app:/" -- "$HOME/.cargo/bin/dredge" mcp
+```
+
+`DREDGE_FOCUS_ROOTS` is a `:`-separated path list on these systems.
+
+Upgrading does not hit the Windows "Access is denied" problem: Unix lets `cargo install` replace
+a running binary. The script wraps the same steps as Windows:
+
+```bash
+./scripts/update.sh           # reinstall; running sessions keep the old version until they end
+./scripts/update.sh --pull    # git pull --ff-only first
+./scripts/update.sh --stop    # end every dredge process first (disconnects live MCP sessions)
+```
+
+Snapshots live in `~/.local/share/dredge` on Linux and `~/Library/Application Support/dredge`
+on macOS (or `DREDGE_DATA_DIR` if set).
 
 ## Cleaning up
 

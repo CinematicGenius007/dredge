@@ -26,6 +26,7 @@ and Linux.
   live in `jobs.rs`.
 - `docs/`: `ARCHITECTURE.md`, `OUTPUT_SCHEMA.md` (the contract), `BENCHMARKS.md`, `INSTALL.md`
   (install, MCP registration, upgrading while sessions hold the exe open).
+- `scripts/`: `update.ps1` (Windows) and `update.sh` (macOS, Linux) reinstall dredge from the repo.
 
 ## Rules
 
