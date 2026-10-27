@@ -171,7 +171,11 @@ pub fn largest(
     ))
 }
 
-pub fn types(idx: &Index, path: &str, limit: usize) -> Result<(Vec<TypeRecord>, TypesSummary), Error> {
+pub fn types(
+    idx: &Index,
+    path: &str,
+    limit: usize,
+) -> Result<(Vec<TypeRecord>, TypesSummary), Error> {
     let node = resolve(idx, path)?;
     let total = idx.allocated(node);
     let mut map: FxHashMap<Box<str>, (u64, u64)> = FxHashMap::default();
@@ -194,7 +198,12 @@ pub fn types(idx: &Index, path: &str, limit: usize) -> Result<(Vec<TypeRecord>, 
         }
     }
     let mut rows: Vec<(Box<str>, (u64, u64))> = map.into_iter().collect();
-    rows.sort_by(|a, b| b.1 .1.cmp(&a.1 .1).then(b.1 .0.cmp(&a.1 .0)).then(a.0.cmp(&b.0)));
+    rows.sort_by(|a, b| {
+        b.1 .1
+            .cmp(&a.1 .1)
+            .then(b.1 .0.cmp(&a.1 .0))
+            .then(a.0.cmp(&b.0))
+    });
     let shown = rows.len().min(limit);
     let remaining_bytes = rows[shown..].iter().map(|r| r.1 .1).sum::<u64>();
     let types = rows.len();
@@ -311,7 +320,11 @@ mod tests {
     fn types_group_by_lowercased_extension() {
         let (idx, r) = sample();
         let (recs, _) = types(&idx, &r, 10).unwrap();
-        let get = |e: &str| recs.iter().find(|t| t.ext == e).map(|t| (t.files, t.allocated_bytes));
+        let get = |e: &str| {
+            recs.iter()
+                .find(|t| t.ext == e)
+                .map(|t| (t.files, t.allocated_bytes))
+        };
         assert_eq!(get("log"), Some((2, 500)));
         assert_eq!(get("bin"), Some((1, 5000)));
         assert_eq!(get("(none)"), Some((2, 10)));
@@ -327,7 +340,10 @@ mod tests {
         assert_eq!(sum.depth, 1);
         assert_eq!(sum.parent.as_deref(), Some(r.as_str()));
         let missing = join(&r, "nope");
-        assert!(matches!(detail(&idx, &missing), Err(Error::PathNotInSnapshot { .. })));
+        assert!(matches!(
+            detail(&idx, &missing),
+            Err(Error::PathNotInSnapshot { .. })
+        ));
     }
 
     #[test]

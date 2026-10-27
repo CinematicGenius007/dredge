@@ -21,7 +21,12 @@ pub struct Envelope<R, S> {
 }
 
 impl<R, S> Envelope<R, S> {
-    pub fn new(kind: &'static str, snapshot: Option<SnapshotRef>, records: Vec<R>, summary: S) -> Self {
+    pub fn new(
+        kind: &'static str,
+        snapshot: Option<SnapshotRef>,
+        records: Vec<R>,
+        summary: S,
+    ) -> Self {
         Envelope {
             schema_version: SCHEMA_VERSION,
             kind,

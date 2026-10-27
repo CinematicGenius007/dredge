@@ -14,7 +14,11 @@ use dredge_core::{Engine, EngineConfig, Error, Output, Query, ScanOptions, ScanP
 use dredge_scan::WalkScanner;
 
 #[derive(Parser)]
-#[command(name = "dredge", version, about = "Find what is using your disk space. Output is JSON.")]
+#[command(
+    name = "dredge",
+    version,
+    about = "Find what is using your disk space. Output is JSON."
+)]
 struct Cli {
     /// Indent the JSON output.
     #[arg(long, global = true)]
@@ -87,7 +91,13 @@ const DEFAULT_IDLE_SECS: u64 = 120;
 
 fn run_mcp(cfg: EngineConfig, idle_secs: Option<u64>) -> ExitCode {
     let idle_secs = idle_secs
-        .or_else(|| std::env::var("DREDGE_MCP_IDLE_SECS").ok()?.trim().parse().ok())
+        .or_else(|| {
+            std::env::var("DREDGE_MCP_IDLE_SECS")
+                .ok()?
+                .trim()
+                .parse()
+                .ok()
+        })
         .unwrap_or(DEFAULT_IDLE_SECS);
     match dredge_mcp::serve(cfg, Duration::from_secs(idle_secs)) {
         Ok(()) => ExitCode::SUCCESS,

@@ -67,7 +67,12 @@ pub fn read_dir(path: &Path, out: &mut Vec<RawEntry>) -> Result<(), DirErr> {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs().min(u64::from(u32::MAX)) as u32)
             .unwrap_or(0);
-        let mut e = RawEntry::new(os_name.to_string_lossy().into_owned(), kind, allocated, logical);
+        let mut e = RawEntry::new(
+            os_name.to_string_lossy().into_owned(),
+            kind,
+            allocated,
+            logical,
+        );
         e.flags = flags;
         e.mtime = mtime;
         out.push(e);

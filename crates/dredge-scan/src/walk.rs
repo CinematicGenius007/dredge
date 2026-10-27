@@ -26,12 +26,20 @@ impl Scanner for WalkScanner {
         "walk"
     }
 
-    fn scan(&self, root: &Path, opts: &ScanOptions, progress: &ScanProgress) -> Result<Index, Error> {
+    fn scan(
+        &self,
+        root: &Path,
+        opts: &ScanOptions,
+        progress: &ScanProgress,
+    ) -> Result<Index, Error> {
         let start = Instant::now();
         let md = std::fs::symlink_metadata(root)
             .map_err(|e| Error::ScanFailed(format!("{}: {e}", root.display())))?;
         if !md.is_dir() {
-            return Err(Error::ScanFailed(format!("{} is not a directory", root.display())));
+            return Err(Error::ScanFailed(format!(
+                "{} is not a directory",
+                root.display()
+            )));
         }
         let root_str = strip_verbatim(&root.to_string_lossy());
         let (volume_id, root_dev) = platform::volume_info(root);
@@ -71,7 +79,12 @@ fn category(e: DirErr) -> ErrorCategory {
     }
 }
 
-fn scan_dir<'scope>(scope: &rayon::Scope<'scope>, ctx: &'scope Ctx<'scope>, path: PathBuf, id: u32) {
+fn scan_dir<'scope>(
+    scope: &rayon::Scope<'scope>,
+    ctx: &'scope Ctx<'scope>,
+    path: PathBuf,
+    id: u32,
+) {
     if ctx.progress.cancelled() {
         return;
     }
@@ -113,7 +126,9 @@ fn scan_dir<'scope>(scope: &rayon::Scope<'scope>, ctx: &'scope Ctx<'scope>, path
         }
     }
     ctx.progress.files.fetch_add(files, Ordering::Relaxed);
-    ctx.progress.allocated_bytes.fetch_add(bytes, Ordering::Relaxed);
+    ctx.progress
+        .allocated_bytes
+        .fetch_add(bytes, Ordering::Relaxed);
 
     for (cid, name) in subdirs {
         let p = path.join(&name);

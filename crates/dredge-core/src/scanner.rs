@@ -56,5 +56,10 @@ pub trait Scanner: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// `root` is an absolute, normalized directory path.
-    fn scan(&self, root: &Path, opts: &ScanOptions, progress: &ScanProgress) -> Result<Index, Error>;
+    fn scan(
+        &self,
+        root: &Path,
+        opts: &ScanOptions,
+        progress: &ScanProgress,
+    ) -> Result<Index, Error>;
 }

@@ -32,7 +32,11 @@ impl Fixture {
         fs::write(tree.join("b/deep/x/y/z/file.dat"), vec![2u8; 8192]).unwrap();
         // A second name for the same data: must not be counted twice.
         fs::hard_link(tree.join("a/big.bin"), tree.join("a/big.link")).unwrap();
-        Fixture { _tmp: tmp, tree, data }
+        Fixture {
+            _tmp: tmp,
+            tree,
+            data,
+        }
     }
 
     fn root(&self) -> String {

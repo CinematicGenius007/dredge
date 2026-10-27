@@ -94,7 +94,16 @@ impl IndexBuilder {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn push_node(&mut self, parent: u32, off: u32, len: u16, flags: u16, a: u64, l: u64, m: u32) -> u32 {
+    fn push_node(
+        &mut self,
+        parent: u32,
+        off: u32,
+        len: u16,
+        flags: u16,
+        a: u64,
+        l: u64,
+        m: u32,
+    ) -> u32 {
         let id = self.parent.len() as u32;
         self.parent.push(parent);
         self.name_off.push(off);
@@ -143,7 +152,9 @@ impl IndexBuilder {
     pub fn finish(mut self, init: MetaInit) -> Result<Index, Error> {
         let n = self.parent.len();
         if n >= u32::MAX as usize || self.names.len() >= u32::MAX as usize {
-            return Err(Error::ScanFailed("tree is too large for the index format".into()));
+            return Err(Error::ScanFailed(
+                "tree is too large for the index format".into(),
+            ));
         }
 
         // Children of each node as contiguous slices of `kids`.
@@ -246,7 +257,11 @@ impl IndexBuilder {
         let mut files_out = Vec::with_capacity(n);
         for (i, &old) in order.iter().enumerate() {
             let o = old as usize;
-            parent.push(if i == 0 { 0 } else { new_pos[self.parent[o] as usize] });
+            parent.push(if i == 0 {
+                0
+            } else {
+                new_pos[self.parent[o] as usize]
+            });
             name_off.push(self.name_off[o]);
             name_len.push(self.name_len[o]);
             flags.push(self.flags[o]);
@@ -265,7 +280,10 @@ impl IndexBuilder {
             .map(|(old, links)| (new_pos[old as usize], links))
             .collect();
 
-        let dirs = flags.iter().filter(|f| Kind::from_flags(**f) == Kind::Dir).count() as u64;
+        let dirs = flags
+            .iter()
+            .filter(|f| Kind::from_flags(**f) == Kind::Dir)
+            .count() as u64;
         let reparse_points = flags
             .iter()
             .filter(|f| !matches!(Kind::from_flags(**f), Kind::File | Kind::Dir))

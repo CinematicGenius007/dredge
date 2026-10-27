@@ -9,7 +9,9 @@ use dredge_scan::WalkScanner;
 
 #[cfg(windows)]
 fn peak_memory_bytes() -> u64 {
-    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
     // SAFETY: zeroed POD struct with `cb` set, filled by the call for the current process.
     unsafe {

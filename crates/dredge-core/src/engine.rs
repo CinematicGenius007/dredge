@@ -15,7 +15,9 @@ use crate::query::{self, DEFAULT_LIMIT, MAX_LIMIT};
 use crate::scanner::{ScanOptions, ScanProgress, Scanner};
 use crate::snapshot::FORMAT_VERSION;
 use crate::store::Store;
-use crate::util::{absolutize, covers, current_dir_string, human_bytes, now_secs, pct, rfc3339, same_path};
+use crate::util::{
+    absolutize, covers, current_dir_string, human_bytes, now_secs, pct, rfc3339, same_path,
+};
 use crate::volumes;
 
 #[derive(Clone)]
@@ -99,7 +101,7 @@ fn snapshot_ref(m: &IndexMeta) -> SnapshotRef {
         root: m.root.clone(),
         taken_at: rfc3339(m.taken_at),
         age_secs: age_secs(m.taken_at),
-        scan_errors: (m.errors.total() > 0).then(|| ErrorCounts {
+        scan_errors: (m.errors.total() > 0).then_some(ErrorCounts {
             denied: m.errors.denied,
             locked: m.errors.locked,
             other: m.errors.other,
@@ -172,7 +174,12 @@ impl Engine {
                 let limit = limit_or_default(*limit)?;
                 let (idx, abs, sref) = self.open(path)?;
                 let (recs, sum) = query::browse(&idx, &abs, limit, self.verbose)?;
-                Ok(Output::Browse(Envelope::new("browse", Some(sref), recs, sum)))
+                Ok(Output::Browse(Envelope::new(
+                    "browse",
+                    Some(sref),
+                    recs,
+                    sum,
+                )))
             }
             Query::Largest {
                 path,
@@ -184,7 +191,12 @@ impl Engine {
                 let (idx, abs, sref) = self.open(path)?;
                 let (recs, sum) =
                     query::largest(&idx, &abs, ext.as_deref(), *min_bytes, limit, self.verbose)?;
-                Ok(Output::Largest(Envelope::new("largest", Some(sref), recs, sum)))
+                Ok(Output::Largest(Envelope::new(
+                    "largest",
+                    Some(sref),
+                    recs,
+                    sum,
+                )))
             }
             Query::Types { path, limit } => {
                 let limit = limit_or_default(*limit)?;
@@ -195,7 +207,12 @@ impl Engine {
             Query::Detail { path } => {
                 let (idx, abs, sref) = self.open(path)?;
                 let (recs, sum) = query::detail(&idx, &abs)?;
-                Ok(Output::Detail(Envelope::new("detail", Some(sref), recs, sum)))
+                Ok(Output::Detail(Envelope::new(
+                    "detail",
+                    Some(sref),
+                    recs,
+                    sum,
+                )))
             }
         }
     }
@@ -241,7 +258,10 @@ impl Engine {
         let abs = absolutize(path, &current_dir_string());
         let mut index = scanner.scan(Path::new(&abs), opts, progress)?;
         let ci = index.meta.case_insensitive;
-        if let Some(v) = volumes::list().into_iter().find(|v| same_path(&v.mount, &abs, ci)) {
+        if let Some(v) = volumes::list()
+            .into_iter()
+            .find(|v| same_path(&v.mount, &abs, ci))
+        {
             index.meta.volume_total_bytes = Some(v.total);
             index.meta.volume_used_bytes = Some(v.total.saturating_sub(v.free));
         }
@@ -272,9 +292,16 @@ impl Engine {
             snapshot_path: snapshot_path.display().to_string(),
             snapshot_bytes,
             volume_used_bytes: m.volume_used_bytes,
-            unaccounted_bytes: m.volume_used_bytes.map(|u| u.saturating_sub(m.allocated_total)),
+            unaccounted_bytes: m
+                .volume_used_bytes
+                .map(|u| u.saturating_sub(m.allocated_total)),
         };
-        Ok(Envelope::new("scan", Some(snapshot_ref(m)), Vec::new(), summary))
+        Ok(Envelope::new(
+            "scan",
+            Some(snapshot_ref(m)),
+            Vec::new(),
+            summary,
+        ))
     }
 
     fn volumes_out(&self) -> VolumesOut {
@@ -306,7 +333,9 @@ impl Engine {
             .iter()
             .map(|p| {
                 // `snaps` is newest first, so the first covering snapshot is the newest.
-                let cover = snaps.iter().find(|s| covers(&s.meta.root, p, s.meta.case_insensitive));
+                let cover = snaps
+                    .iter()
+                    .find(|s| covers(&s.meta.root, p, s.meta.case_insensitive));
                 FocusRoot {
                     path: p.clone(),
                     scanned: cover.is_some(),
@@ -386,7 +415,11 @@ mod tests {
     }
 
     fn root() -> String {
-        crate::util::lexical_clean(if cfg!(windows) { r"C:\fixture" } else { "/fixture" })
+        crate::util::lexical_clean(if cfg!(windows) {
+            r"C:\fixture"
+        } else {
+            "/fixture"
+        })
     }
 
     #[test]
@@ -395,12 +428,22 @@ mod tests {
         let e = engine(dir.path());
         let r = root();
         let out = e
-            .scan(&FakeScanner, &r, &ScanOptions::default(), &ScanProgress::default())
+            .scan(
+                &FakeScanner,
+                &r,
+                &ScanOptions::default(),
+                &ScanProgress::default(),
+            )
             .unwrap();
         assert_eq!(out.summary.files, 2);
         assert_eq!(out.summary.allocated_bytes, 4196);
 
-        let json = e.run(&Query::Browse { path: r.clone(), limit: None }).render(false);
+        let json = e
+            .run(&Query::Browse {
+                path: r.clone(),
+                limit: None,
+            })
+            .render(false);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["kind"], "browse");
         assert_eq!(v["schema_version"], 1);
@@ -415,13 +458,19 @@ mod tests {
     fn errors_are_documents_with_stable_codes() {
         let dir = tempfile::tempdir().unwrap();
         let e = engine(dir.path());
-        let out = e.run(&Query::Browse { path: root(), limit: None });
+        let out = e.run(&Query::Browse {
+            path: root(),
+            limit: None,
+        });
         assert!(out.is_error());
         let v: serde_json::Value = serde_json::from_str(&out.render(false)).unwrap();
         assert_eq!(v["kind"], "error");
         assert_eq!(v["error"]["code"], "no_snapshot");
 
-        let bad = e.run(&Query::Browse { path: root(), limit: Some(0) });
+        let bad = e.run(&Query::Browse {
+            path: root(),
+            limit: Some(0),
+        });
         let v: serde_json::Value = serde_json::from_str(&bad.render(false)).unwrap();
         assert_eq!(v["error"]["code"], "invalid_argument");
     }
@@ -431,8 +480,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let e = engine(dir.path());
         let r = root();
-        e.scan(&FakeScanner, &r, &ScanOptions::default(), &ScanProgress::default())
-            .unwrap();
+        e.scan(
+            &FakeScanner,
+            &r,
+            &ScanOptions::default(),
+            &ScanProgress::default(),
+        )
+        .unwrap();
         let sub = format!("{r}{}sub", std::path::MAIN_SEPARATOR);
         let out = e.run(&Query::Detail { path: sub });
         let v: serde_json::Value = serde_json::from_str(&out.render(false)).unwrap();

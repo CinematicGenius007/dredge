@@ -60,7 +60,11 @@ impl Job {
             },
             roots: self.roots.clone(),
             current_root: st.current_root.clone().filter(|_| running),
-            progress: st.progress.as_ref().filter(|_| running).map(|p| p.snapshot()),
+            progress: st
+                .progress
+                .as_ref()
+                .filter(|_| running)
+                .map(|p| p.snapshot()),
             elapsed_ms: st
                 .elapsed_ms
                 .unwrap_or_else(|| self.started.elapsed().as_millis() as u64),
@@ -84,7 +88,11 @@ impl Job {
     fn finish(&self, first_error: Option<ErrorBody>) {
         {
             let mut st = self.lock();
-            st.phase = if first_error.is_some() { Phase::Failed } else { Phase::Done };
+            st.phase = if first_error.is_some() {
+                Phase::Failed
+            } else {
+                Phase::Done
+            };
             st.error = first_error;
             st.current_root = None;
             st.elapsed_ms = Some(self.started.elapsed().as_millis() as u64);
@@ -173,7 +181,9 @@ fn run(engine: &Engine, job: &Job) {
         first_error
     }));
     let error = outcome.unwrap_or_else(|_| {
-        Some(ErrorBody::from(&Error::Internal("scan thread panicked".into())))
+        Some(ErrorBody::from(&Error::Internal(
+            "scan thread panicked".into(),
+        )))
     });
     job.finish(error);
 }

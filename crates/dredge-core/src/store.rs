@@ -80,10 +80,19 @@ impl Store {
             .filter_map(|path| {
                 let meta = snapshot::read_header(&path).ok()?;
                 let file_bytes = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                Some(SnapshotFile { path, meta, file_bytes })
+                Some(SnapshotFile {
+                    path,
+                    meta,
+                    file_bytes,
+                })
             })
             .collect();
-        out.sort_by(|a, b| b.meta.taken_at.cmp(&a.meta.taken_at).then(a.meta.root.cmp(&b.meta.root)));
+        out.sort_by(|a, b| {
+            b.meta
+                .taken_at
+                .cmp(&a.meta.taken_at)
+                .then(a.meta.root.cmp(&b.meta.root))
+        });
         out
     }
 

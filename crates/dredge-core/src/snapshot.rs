@@ -55,7 +55,9 @@ macro_rules! columns {
                 let k = left.min(CHUNK);
                 r.read_exact(&mut buf[..k * $size])?;
                 for c in buf[..k * $size].chunks_exact($size) {
-                    out.push(<$t>::from_le_bytes(c.try_into().map_err(|_| bad("short column"))?));
+                    out.push(<$t>::from_le_bytes(
+                        c.try_into().map_err(|_| bad("short column"))?,
+                    ));
                 }
                 left -= k;
             }
@@ -143,12 +145,14 @@ fn read_prelude<R: Read>(r: &mut R, path: &Path) -> Result<IndexMeta, Error> {
         reason: reason.to_string(),
     };
     let mut magic = [0u8; 8];
-    r.read_exact(&mut magic).map_err(|_| corrupt("file too short"))?;
+    r.read_exact(&mut magic)
+        .map_err(|_| corrupt("file too short"))?;
     if &magic != MAGIC {
         return Err(corrupt("not a dredge snapshot"));
     }
     let mut v = [0u8; 4];
-    r.read_exact(&mut v).map_err(|_| corrupt("file too short"))?;
+    r.read_exact(&mut v)
+        .map_err(|_| corrupt("file too short"))?;
     let version = u32::from_le_bytes(v);
     if version != FORMAT_VERSION {
         return Err(Error::SnapshotVersion {
@@ -157,13 +161,15 @@ fn read_prelude<R: Read>(r: &mut R, path: &Path) -> Result<IndexMeta, Error> {
         });
     }
     let mut l = [0u8; 4];
-    r.read_exact(&mut l).map_err(|_| corrupt("file too short"))?;
+    r.read_exact(&mut l)
+        .map_err(|_| corrupt("file too short"))?;
     let len = u32::from_le_bytes(l);
     if len > MAX_HEADER_BYTES {
         return Err(corrupt("header too large"));
     }
     let mut hdr = vec![0u8; len as usize];
-    r.read_exact(&mut hdr).map_err(|_| corrupt("truncated header"))?;
+    r.read_exact(&mut hdr)
+        .map_err(|_| corrupt("truncated header"))?;
     serde_json::from_slice(&hdr).map_err(|e| corrupt(&format!("bad header: {e}")))
 }
 
@@ -211,7 +217,12 @@ pub fn read(path: &Path) -> Result<Index, Error> {
         if flat.len() % 2 != 0 {
             return Err(bad("odd hard link table"));
         }
-        let hard_links: HashMap<u32, u32> = flat.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+        let hard_links: HashMap<u32, u32> = flat
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&[node, links]| (node, links))
+            .collect();
         Ok(Index {
             meta,
             names,
@@ -298,7 +309,10 @@ mod tests {
         v.extend_from_slice(MAGIC);
         v.extend_from_slice(&99u32.to_le_bytes());
         fs::write(&p, v).unwrap();
-        assert!(matches!(read(&p), Err(Error::SnapshotVersion { found: 99, .. })));
+        assert!(matches!(
+            read(&p),
+            Err(Error::SnapshotVersion { found: 99, .. })
+        ));
     }
 
     #[test]

@@ -63,7 +63,10 @@ pub fn name_eq(a: &str, b: &str, case_insensitive: bool) -> bool {
 pub fn covers(root: &str, path: &str, case_insensitive: bool) -> bool {
     let r = components(root);
     let p = components(path);
-    p.len() >= r.len() && r.iter().zip(p.iter()).all(|(a, b)| name_eq(a, b, case_insensitive))
+    p.len() >= r.len()
+        && r.iter()
+            .zip(p.iter())
+            .all(|(a, b)| name_eq(a, b, case_insensitive))
 }
 
 /// True when both paths have identical components.
@@ -112,7 +115,10 @@ fn is_absolute(s: &str) -> bool {
     if cfg!(windows) {
         let b = s.as_bytes();
         let unc = b.len() >= 2 && is_sep(b[0] as char) && is_sep(b[1] as char);
-        let drive = b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() && (b.len() == 2 || is_sep(b[2] as char));
+        let drive = b.len() >= 2
+            && b[1] == b':'
+            && b[0].is_ascii_alphabetic()
+            && (b.len() == 2 || is_sep(b[2] as char));
         unc || drive
     } else {
         s.starts_with('/')

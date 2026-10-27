@@ -22,6 +22,7 @@ pub enum DirErr {
 /// Per-scan facts a backend may need.
 pub struct PlatformCtx {
     /// Unix: device of the scan root, used to avoid crossing filesystems.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub root_dev: Option<u64>,
 }
 

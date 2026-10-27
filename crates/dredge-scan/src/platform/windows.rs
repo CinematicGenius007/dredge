@@ -124,7 +124,7 @@ fn open_dir(path: &Path, access: u32) -> Result<Handle, u32> {
 pub fn volume_id(root: &Path) -> Option<String> {
     let h = open_dir(root, FILE_READ_ATTRIBUTES).ok()?;
     let mut buf = [0u64; 3]; // FILE_ID_INFO: u64 volume serial + 16-byte file id
-    // SAFETY: buffer is 24 bytes, matching FILE_ID_INFO.
+                             // SAFETY: buffer is 24 bytes, matching FILE_ID_INFO.
     let ok = unsafe {
         GetFileInformationByHandleEx(h.0, FILE_ID_INFO, buf.as_mut_ptr() as *mut c_void, 24)
     };
@@ -163,8 +163,10 @@ fn i64_at(b: &[u8], off: usize) -> i64 {
 fn parse_entry(b: &[u8], off: usize, name_len: usize) -> Option<RawEntry> {
     let name_bytes = &b[off + OFF_NAME..off + OFF_NAME + name_len];
     let wide: Vec<u16> = name_bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
         .collect();
     if wide == [0x2e] || wide == [0x2e, 0x2e] {
         return None;
@@ -180,7 +182,8 @@ fn parse_entry(b: &[u8], off: usize, name_len: usize) -> Option<RawEntry> {
     let logical = i64_at(b, off + OFF_END_OF_FILE).max(0) as u64;
     let allocated = i64_at(b, off + OFF_ALLOCATION).max(0) as u64;
     let filetime = i64_at(b, off + OFF_LAST_WRITE);
-    let mtime = (filetime / 10_000_000 - FILETIME_UNIX_DIFF_SECS).clamp(0, i64::from(u32::MAX)) as u32;
+    let mtime =
+        (filetime / 10_000_000 - FILETIME_UNIX_DIFF_SECS).clamp(0, i64::from(u32::MAX)) as u32;
 
     let dehydrated = attrs & ATTR_DEHYDRATED != 0;
     let cloud_tag = tag & TAG_CLOUD_MASK == TAG_CLOUD_BASE;
@@ -224,13 +227,22 @@ pub fn read_dir(path: &Path, out: &mut Vec<RawEntry>) -> Result<(), DirErr> {
             // SAFETY: `buf` is 8-byte aligned and `cap` bytes long; the handle is a live
             // directory handle opened with FILE_LIST_DIRECTORY.
             let ok = unsafe {
-                GetFileInformationByHandleEx(h.0, class, buf.as_mut_ptr() as *mut c_void, cap as u32)
+                GetFileInformationByHandleEx(
+                    h.0,
+                    class,
+                    buf.as_mut_ptr() as *mut c_void,
+                    cap as u32,
+                )
             };
             class = FILE_ID_EXTD_DIRECTORY_INFO;
             if ok == 0 {
                 // SAFETY: trivially safe thread-local error read.
                 let e = unsafe { GetLastError() };
-                return if e == ERROR_NO_MORE_FILES { Ok(()) } else { Err(classify_query(e)) };
+                return if e == ERROR_NO_MORE_FILES {
+                    Ok(())
+                } else {
+                    Err(classify_query(e))
+                };
             }
             // SAFETY: reinterpreting initialized u64 storage as bytes; same allocation and length.
             let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, cap) };
@@ -265,7 +277,10 @@ mod tests {
         let w = wide_extended(Path::new(r"C:\a"));
         assert_eq!(String::from_utf16_lossy(&w[..w.len() - 1]), r"\\?\C:\a");
         let u = wide_extended(Path::new(r"\\srv\share\a"));
-        assert_eq!(String::from_utf16_lossy(&u[..u.len() - 1]), r"\\?\UNC\srv\share\a");
+        assert_eq!(
+            String::from_utf16_lossy(&u[..u.len() - 1]),
+            r"\\?\UNC\srv\share\a"
+        );
         let v = wide_extended(Path::new(r"\\?\C:\a"));
         assert_eq!(String::from_utf16_lossy(&v[..v.len() - 1]), r"\\?\C:\a");
     }
