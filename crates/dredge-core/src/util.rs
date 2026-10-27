@@ -66,6 +66,11 @@ pub fn covers(root: &str, path: &str, case_insensitive: bool) -> bool {
     p.len() >= r.len() && r.iter().zip(p.iter()).all(|(a, b)| name_eq(a, b, case_insensitive))
 }
 
+/// True when both paths have identical components.
+pub fn same_path(a: &str, b: &str, case_insensitive: bool) -> bool {
+    covers(a, b, case_insensitive) && covers(b, a, case_insensitive)
+}
+
 /// Append `name` to `base` with exactly one separator between them.
 pub fn push_join(base: &mut String, name: &str) {
     if !base.ends_with(is_sep) {
