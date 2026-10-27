@@ -255,6 +255,9 @@ impl Engine {
         progress: &ScanProgress,
     ) -> Result<ScanOut, Error> {
         require_path(path)?;
+        // Wall clock for the whole operation (walk, index build, snapshot write), so the
+        // reported time and files/sec match what the caller actually waited.
+        let started = Instant::now();
         let abs = absolutize(path, &current_dir_string());
         let mut index = scanner.scan(Path::new(&abs), opts, progress)?;
         let ci = index.meta.case_insensitive;
@@ -274,7 +277,8 @@ impl Engine {
             }
         }
         let m = &index.meta;
-        let secs = (m.elapsed_ms as f64 / 1000.0).max(0.001);
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let secs = (elapsed_ms as f64 / 1000.0).max(0.001);
         let summary = ScanSummary {
             root: m.root.clone(),
             scanner: m.scanner.clone(),
@@ -283,7 +287,7 @@ impl Engine {
             allocated_bytes: m.allocated_total,
             human: human_bytes(m.allocated_total),
             logical_bytes: m.logical_total,
-            elapsed_ms: m.elapsed_ms,
+            elapsed_ms,
             files_per_sec: (m.files as f64 / secs) as u64,
             hard_link_groups: m.hard_link_groups,
             reparse_points: m.reparse_points,

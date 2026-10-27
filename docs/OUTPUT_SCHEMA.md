@@ -122,6 +122,10 @@ not scanned. This is how an agent learns, in one call, what is indexed and how s
 }
 ```
 
+`elapsed_ms` is the wall-clock time of the whole scan (walk, index build and snapshot write),
+and `files_per_sec` is `files` over that time, so both match what the caller waited. The walk
+alone is faster; `bench_scan` measures that.
+
 `errors.samples` holds at most 20 paths. `volume_used_bytes` and `unaccounted_bytes` appear
 only when the root is a volume root: `unaccounted_bytes` is volume used space the scan
 could not attribute (filesystem metadata, shadow copies, unreadable folders).
