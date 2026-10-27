@@ -75,6 +75,27 @@ enum Command {
     Detail { path: String },
     /// Print the JSON Schema of every output document.
     Schema,
+    /// Run the read-only MCP server on stdin/stdout.
+    Mcp {
+        /// Drop the loaded index after this many idle seconds (default 120, or $DREDGE_MCP_IDLE_SECS).
+        #[arg(long)]
+        idle_timeout_secs: Option<u64>,
+    },
+}
+
+const DEFAULT_IDLE_SECS: u64 = 120;
+
+fn run_mcp(cfg: EngineConfig, idle_secs: Option<u64>) -> ExitCode {
+    let idle_secs = idle_secs
+        .or_else(|| std::env::var("DREDGE_MCP_IDLE_SECS").ok()?.trim().parse().ok())
+        .unwrap_or(DEFAULT_IDLE_SECS);
+    match dredge_mcp::serve(cfg, Duration::from_secs(idle_secs)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("dredge: mcp server failed: {e}");
+            ExitCode::from(1)
+        }
+    }
 }
 
 fn emit(out: &Output, pretty: bool) {
@@ -121,13 +142,15 @@ fn scan_one(engine: &Engine, path: &str, threads: Option<usize>, show_progress: 
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let engine = Engine::new(EngineConfig::from_env(cli.data_dir, cli.verbose));
+    let cfg = EngineConfig::from_env(cli.data_dir, cli.verbose);
+    let engine = Engine::new(cfg.clone());
 
     let outputs: Vec<Output> = match cli.command {
         Command::Schema => {
             println!("{}", schema_json(cli.pretty));
             return ExitCode::SUCCESS;
         }
+        Command::Mcp { idle_timeout_secs } => return run_mcp(cfg, idle_timeout_secs),
         Command::Volumes => vec![engine.run(&Query::Volumes)],
         Command::Snapshots => vec![engine.run(&Query::Snapshots)],
         Command::Browse { path, limit } => vec![engine.run(&Query::Browse { path, limit })],

@@ -1,0 +1,12 @@
+[package]
+name = "dredge-mcp"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+dredge-core.workspace = true
+dredge-scan.workspace = true
+rmcp.workspace = true
+tokio.workspace = true
+serde.workspace = true

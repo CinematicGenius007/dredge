@@ -18,6 +18,7 @@ use crate::store::Store;
 use crate::util::{absolutize, covers, current_dir_string, human_bytes, now_secs, pct, rfc3339, same_path};
 use crate::volumes;
 
+#[derive(Clone)]
 pub struct EngineConfig {
     pub data_dir: PathBuf,
     /// Roots agents mostly work in; surfaced by `volumes` so they can see what is scanned.
@@ -245,6 +246,13 @@ impl Engine {
             index.meta.volume_used_bytes = Some(v.total.saturating_sub(v.free));
         }
         let (snapshot_path, snapshot_bytes) = self.store.save(&index)?;
+        {
+            // A rescan within the same second would otherwise look identical to the cached one.
+            let mut c = self.cache();
+            if c.as_ref().is_some_and(|e| e.file == snapshot_path) {
+                *c = None;
+            }
+        }
         let m = &index.meta;
         let secs = (m.elapsed_ms as f64 / 1000.0).max(0.001);
         let summary = ScanSummary {

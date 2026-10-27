@@ -93,8 +93,9 @@ fn read_bytes<R: Read>(r: &mut R) -> io::Result<Vec<u8>> {
 }
 
 /// Write atomically (temp file + rename). Returns the size of the snapshot file in bytes.
+/// The temp name carries the pid so concurrent processes scanning one root cannot collide.
 pub fn write(path: &Path, index: &Index) -> Result<u64, Error> {
-    let tmp = path.with_extension("dredge.tmp");
+    let tmp = path.with_extension(format!("dredge.{}.tmp", std::process::id()));
     let ctx = |e: io::Error| Error::io(format!("writing snapshot {}", path.display()), e);
     write_to(&tmp, index).map_err(|e| {
         let _ = fs::remove_file(&tmp);

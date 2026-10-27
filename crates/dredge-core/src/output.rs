@@ -151,7 +151,7 @@ pub struct SnapshotsSummary {
     pub data_dir: String,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[derive(Clone, Serialize, JsonSchema)]
 pub struct ScanSummary {
     pub root: String,
     pub scanner: String,
@@ -251,7 +251,7 @@ pub struct JobSummary {
     pub error: Option<ErrorBody>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[derive(Clone, Serialize, JsonSchema)]
 pub struct ErrorBody {
     pub code: &'static str,
     pub message: String,
