@@ -40,6 +40,22 @@ Caused by:
 
 This happens on **every** reinstall while any session that uses dredge is open. Pick one fix.
 
+### The script (does Option A or B for you)
+
+```powershell
+cd C:\Users\ayush\personal_projects\dredge
+.\scripts\update.ps1          # rename the running exe aside, then install (sessions keep running)
+.\scripts\update.ps1 -Stop    # end every dredge process first, then install
+.\scripts\update.ps1 -Pull    # git pull --ff-only first (combine with either)
+```
+
+`-Stop` disconnects the dredge MCP server in every session that uses it, and those sessions must
+be restarted or reconnect the server to get dredge back. Use it only when no session is
+mid-task. The default mode interrupts nothing. If PowerShell blocks the script, run it as
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\update.ps1`.
+
+The two manual options below are what the script does.
+
 ### Option A: rename the running exe, then install (no sessions need to close)
 
 Windows allows renaming a running exe, just not overwriting it.
