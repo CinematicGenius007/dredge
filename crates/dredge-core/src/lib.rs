@@ -6,9 +6,12 @@ pub mod builder;
 pub mod error;
 pub mod model;
 pub mod scanner;
+pub mod snapshot;
+pub mod store;
 pub mod util;
 
 pub use builder::{ErrorCategory, IndexBuilder, MetaInit};
 pub use error::Error;
 pub use model::{Index, IndexMeta, Kind, RawEntry, ScanErrors};
 pub use scanner::{ProgressSnapshot, ScanOptions, ScanProgress, Scanner};
+pub use store::{SnapshotFile, Store};
