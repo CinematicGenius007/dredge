@@ -16,6 +16,7 @@ pub enum DirErr {
     Locked,
     Other,
     /// The platform fast path is not available for this directory; use the generic path.
+    #[cfg_attr(not(windows), allow(dead_code))]
     Unsupported,
 }
 
