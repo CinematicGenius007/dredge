@@ -102,7 +102,7 @@ the old one.
 
 ## macOS and Linux
 
-Not yet tested on a real macOS or Linux machine; CI builds and tests there on every push.
+CI builds, lints and tests on both on every push, and the macOS install and scan path has been run on a real Mac.
 
 Install Rust with `rustup` (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`,
 then `rustup set profile minimal` and `rustup component add clippy rustfmt`). On Linux you also
