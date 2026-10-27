@@ -88,7 +88,13 @@ Present **only when relevant** (or always with `--verbose` / `verbose: true`):
 `label` omitted if empty. `snapshot_age_secs` present only if a snapshot rooted exactly at
 the mount exists.
 
-`summary`: `{ "volumes": 2 }`
+`summary`: `{ "volumes": 2, "data_dir": "C:\\Users\\me\\AppData\\Local\\dredge", "focus": [...] }`
+
+`focus` is present only when `DREDGE_FOCUS_ROOTS` is set: one entry per configured root,
+`{ "path": "C:\\server", "scanned": true, "snapshot_age_secs": 5231, "covered_by": "C:\\" }`.
+`scanned` is true when any snapshot covers the path; `covered_by` names the covering
+snapshot's root when it is not the focus root itself; `snapshot_age_secs` is omitted when
+not scanned. This is how an agent learns, in one call, what is indexed and how stale it is.
 
 ## `kind: "scan"`
 
@@ -229,15 +235,21 @@ For a hard-linked file, the record has `hard_links` and, on an alias, flag
 
 ```json
 { "schema_version": 1, "kind": "job", "records": [],
-  "summary": { "job_id": "j1", "state": "running", "path": "C:\\Users\\me" } }
+  "summary": { "job_id": "scan-1", "state": "running", "roots": ["C:\\server", "C:\\"],
+               "elapsed_ms": 3 } }
 ```
 
 `disk_job_status(job_id, wait_seconds)` returns the same envelope; `state` is one of
-`running`, `done`, `failed`, `cancelled`. While running, `summary.progress` is
-`{ "files": 220113, "dirs": 18002, "allocated_bytes": 41000000000, "errors": 4, "elapsed_ms": 9100 }`.
-When `done`, the full `kind: "scan"` summary is under `summary.result`. When `failed`,
-`summary.error` is an error object (below). An unknown id is an `error` document with
-code `job_not_found`.
+`running`, `done`, `failed`. A job scans its `roots` in order. While running,
+`summary.current_root` names the root being scanned and `summary.progress` is
+`{ "files": 220113, "dirs": 18002, "allocated_bytes": 41000000000, "errors": 4 }` for that
+root; `elapsed_ms` covers the whole job. `summary.results` holds one `kind: "scan"` summary
+per finished root (omitted while empty). When `failed`, `summary.error` is the first error
+object (below); roots that finished before or after the failure are still in `results`.
+An unknown id is an `error` document with code `job_not_found`.
+
+Only one scan runs at a time per server process: calling `disk_scan` while a job is running
+returns that job (check `roots`) instead of starting another.
 
 ## `kind: "error"`
 
@@ -276,7 +288,7 @@ descriptions carry what an agent needs.
 | Tool | Input |
 |---|---|
 | `disk_volumes` | none |
-| `disk_scan` | `path` (string) |
+| `disk_scan` | `path?` (string; omit to scan the configured focus roots) |
 | `disk_job_status` | `job_id` (string), `wait_seconds` (int 0-60, default 0) |
 | `disk_browse` | `path`, `limit` (default 10) |
 | `disk_largest` | `path`, `ext?`, `min_bytes?`, `limit` (default 10) |
@@ -284,7 +296,12 @@ descriptions carry what an agent needs.
 | `disk_detail` | `path` |
 
 Each tool returns the corresponding envelope as one compact JSON text block. `verbose`
-is CLI-only; agents get the compact form.
+is CLI-only; agents get the compact form. A relative `path` is resolved against the
+server's (or CLI's) working directory, so an agent session can pass `.`; paths are
+normalized lexically (`.`/`..` resolved, drive letter upper-cased on Windows).
+
+On the CLI, `dredge scan` with several paths (or with none and `DREDGE_FOCUS_ROOTS` set)
+prints one `scan` (or `error`) document per line.
 
 ## Stability
 

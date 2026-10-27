@@ -98,7 +98,10 @@ siblings by name: exact match first, then case-folded fallback on Windows/macOS
 - **Cloud placeholders (OneDrive etc.) are never hydrated.** Detected from file
   attributes during enumeration; no file is ever opened for data. Flagged
   `cloud_placeholder`; allocated is whatever the filesystem reports (usually ~0) and
-  `logical_bytes` is surfaced so the agent sees "400 MB online-only".
+  `logical_bytes` is surfaced so the agent sees "400 MB online-only". A *dehydrated cloud
+  directory* (recall-on-open / recall-on-data-access / offline attributes) is flagged the
+  same way and not entered, because listing it can make the sync engine fetch its
+  contents; a populated cloud-tag directory or a pinned file is read normally.
 - A directory's own metadata size is included in its allocated total.
 - A scan is **single-volume**: Windows mount points are reparse points (not followed);
   on Unix, a directory whose `st_dev` differs from the root's is recorded as `mount_point`
@@ -121,7 +124,9 @@ pub trait Scanner: Send + Sync {
 
 `ScanProgress` is a struct of atomics (files, dirs, bytes, errors, cancel flag). The CLI
 prints it to stderr when stderr is a TTY; MCP reads it for `disk_job_status`. A scanner
-checks `progress.cancelled()` between directories.
+checks `progress.cancelled()` between directories. Nothing in phase 1 sets the flag: the
+CLI has no Ctrl-C handler (that would need an extra dependency) and snapshots are written
+atomically, so an interrupted scan leaves no partial file.
 
 ### WalkScanner
 
@@ -149,7 +154,7 @@ with `FIND_FIRST_EX_LARGE_FETCH` is the planned fallback only if the extended cl
 unreliable in testing.
 
 `FILE_ID_EXTD_DIR_INFO` has no link count, so on Windows every file's ID is recorded in a
-transient list and grouped at finalize (≈ 20 B/file, freed after build). On Unix only
+transient list and grouped at finalize (≈ 32 B/file: a `u128` ID plus a `u32`, freed after build). On Unix only
 files with `nlink > 1` are recorded.
 
 Cloud detection (Windows): `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`,
@@ -257,20 +262,37 @@ Tools map 1:1 to Engine methods and return the same envelope as compact JSON tex
 
 - **Jobs:** `disk_scan` spawns the scan on a blocking thread and returns
   `{kind:"job", job_id, state:"running"}` immediately. `disk_job_status` long-polls up to
-  `wait_seconds` (tokio `Notify`) and returns state, live counters (files, dirs, bytes,
-  errors, elapsed), and on completion the scan summary. The server stays responsive for
-  other tool calls meanwhile. Jobs are in-memory and die with the process (snapshots
-  persist).
+  `wait_seconds` (a tokio `watch` channel) and returns state, live counters (files, dirs,
+  bytes, errors), and on completion one scan summary per root. The server stays
+  responsive for other tool calls meanwhile. Jobs are in-memory and die with the process
+  (snapshots persist); the last 8 are kept. One scan runs at a time per process; a second
+  `disk_scan` returns the running job. `path` is optional: omitted, the job scans the
+  focus roots in order.
 - **Single loaded index:** the Engine cache holds at most one `Arc<Index>`. Loading a
   different snapshot evicts the current one. A timer unloads it after the idle timeout
   (default 120 s; `--idle-timeout-secs` or `DREDGE_MCP_IDLE_SECS`). An in-flight query
   holds its own `Arc`, so eviction never invalidates a running query. A scan under way
   builds its own transient index, so peak memory can briefly be one loaded + one building.
-- **Annotations:** every tool sets `readOnlyHint = true`, `destructiveHint = false`,
-  `openWorldHint = false`. `disk_scan` is the one nuance: it writes only dredge's own
-  snapshot file in the data directory and nothing else. It's annotated read-only per the
-  plan; the tool description says it writes a snapshot. (⚑ say so if you'd rather it not
-  carry the read-only hint.)
+- **Annotations:** every tool sets `openWorldHint = false`. All tools except `disk_scan`
+  set `readOnlyHint = true`. `disk_scan` writes dredge's own snapshot file in the data
+  directory and nothing else, so it is annotated truthfully: `readOnlyHint = false`,
+  `destructiveHint = false`, `idempotentHint = true`, and its description says what it
+  writes. (Deviation from the earlier draft, which marked it read-only; a client that
+  auto-approves read-only tools will therefore ask before the first scan.)
+- **Concurrent processes:** each agent session runs its own MCP process, so several may
+  share one data directory. Snapshot writes are atomic (temp file named with the pid, then
+  rename), reads see either the old or the new snapshot, and each process reloads when it
+  sees a newer `taken_at` for the snapshot it has cached.
+
+### Focus roots
+
+`DREDGE_FOCUS_ROOTS` (a platform path list: `;` on Windows, `:` elsewhere; nothing is
+hard-coded) names the roots agents mostly work in, e.g. `C:\server;C:\`. It changes three
+things: `volumes` reports each root's scan state and snapshot age (`summary.focus`);
+`disk_scan` / `dredge scan` with no path scans them in order; and the MCP server
+instructions point agents at `disk_volumes` first. Queries are not restricted to focus
+roots, and the newest snapshot that covers a path answers it (so scanning `C:\server`
+after `C:\` gives that subtree fresher data without a full rescan).
 
 ## 10. Extension points (interfaces only)
 
@@ -352,7 +374,8 @@ Snapshot filename hash is a 10-line inline FNV-1a, not a dependency.
 - **D10** Byte counts are JSON numbers (u64). Exact up to 2^53 (≈ 9 PB), which is beyond
   any single volume this tool will see.
 - **D11** No cancellation tool in MCP phase 1 (not in the plan). The scanner supports
-  cancellation internally (CLI Ctrl-C); exposing it later is additive.
+  cancellation internally, but nothing exposes it yet (no CLI Ctrl-C handler, no MCP
+  tool); adding either later is additive.
 - **D12** Human sizes use binary units (KiB, MiB, GiB), one decimal.
 - **D13** `Engine` takes the scanner as an argument to `scan()`, so core never depends on
   `dredge-scan`.
