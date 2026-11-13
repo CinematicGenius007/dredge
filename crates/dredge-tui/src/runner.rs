@@ -496,8 +496,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let engine = Engine::new(dredge_core::EngineConfig {
             data_dir: tmp.path().join("data"),
-            focus_roots: vec![],
-            verbose: false,
+            ..Default::default()
         });
         let root = tmp.path().to_string_lossy().into_owned();
         assert_eq!(load_overview(&engine, &root), Ok(None));

@@ -48,10 +48,14 @@ and Linux.
 - Sizes are allocated bytes, not logical. Hard links count once. Symlinks and junctions are never
   followed. Cloud placeholders are never hydrated (a dehydrated cloud directory is flagged, not
   entered).
-- Read-only. The only thing dredge writes is its own snapshots in the data directory
-  (`DREDGE_DATA_DIR`, else the OS local data directory). There is no delete or cleanup feature.
+- Read-only. The only files dredge writes or removes are its own snapshot files in the data
+  directory (`DREDGE_DATA_DIR`, else the OS local data directory). `dredge forget` and the
+  opt-in `DREDGE_MAX_DATA` cap remove them under the rules in RFC 0002: a regular file directly
+  in the data directory with the snapshot magic, or a stale `*.dredge.<pid>.tmp`. Nothing else
+  is ever removed. The MCP server has no delete tool; a `disk_scan` evicts only when the user set
+  `DREDGE_MAX_DATA`.
 - Suggest, never act. dredge may suggest cleanup commands as text (insight records, the TUI's
-  copy text) but never executes them, and never deletes or moves anything.
+  copy text) but never executes them, and never deletes or moves anything of the user's.
 - Local only: no network access, no telemetry.
 - MCP stdout carries the protocol only; log to stderr.
 - Tests build fixtures in `tempfile` directories and never touch anything else. Keep scanning

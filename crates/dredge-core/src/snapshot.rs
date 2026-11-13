@@ -198,6 +198,16 @@ pub fn read_version(path: &Path) -> Result<u32, Error> {
     Ok(u32::from_le_bytes(v))
 }
 
+/// True when the file starts with the dredge snapshot magic, whatever its format version.
+/// `Store::remove` refuses any file without it.
+pub fn has_magic(path: &Path) -> bool {
+    let mut magic = [0u8; 8];
+    File::open(path)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .is_ok()
+        && &magic == MAGIC
+}
+
 /// Read only the header; does not touch the compressed body.
 pub fn read_header(path: &Path) -> Result<IndexMeta, Error> {
     read_prelude(&mut open(path)?, path)

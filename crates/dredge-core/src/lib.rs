@@ -16,7 +16,7 @@ pub mod util;
 pub mod volumes;
 
 pub use builder::{ErrorCategory, IndexBuilder, MetaInit};
-pub use engine::{Engine, EngineConfig, Query};
+pub use engine::{Engine, EngineConfig, Forget, Query};
 pub use error::Error;
 pub use model::{Index, IndexMeta, Kind, RawEntry, ScanErrors};
 pub use output::Output;

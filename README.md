@@ -11,8 +11,9 @@ Status: early development. There is no release yet, so install from source.
 
 ## Read-only
 
-- dredge writes only its own snapshots, in `DREDGE_DATA_DIR` or the OS local data directory.
-- It never deletes, moves or modifies files.
+- dredge writes, and on request removes, only its own snapshot files, in `DREDGE_DATA_DIR` or
+  the OS local data directory.
+- It never deletes, moves or modifies any other file.
 - It does not follow symlinks or junctions, and it does not download cloud placeholders.
 - It makes no network connections and sends no telemetry.
 - Sizes are allocated bytes (space on disk). Hard links count once.
@@ -50,6 +51,28 @@ dredge --pretty browse ~             # indented JSON
 
 Other commands: `dredge snapshots` lists saved snapshots, `dredge doctor` checks snapshot and environment health, `dredge completions bash` prints shell completions, and `dredge schema` prints the JSON
 Schema of every output document.
+
+### Space used by dredge itself
+
+Snapshots take about 6 bytes per scanned file or folder on disk, so a home directory of 8 million
+entries is close to 50 MB. `dredge snapshots` shows the total and marks snapshots no query will
+use: `shadowed_by` names a newer snapshot that covers the same paths (you scanned `~/code/app`,
+then `~`), and `root_exists: false` means the folder is gone.
+
+```bash
+dredge snapshots                     # each snapshot, the total, and what is prunable
+dredge forget --prune --dry-run      # what --prune would remove; removes nothing
+dredge forget --prune                # remove shadowed, deleted-root and unreadable snapshots
+dredge forget ~/code/app             # remove the snapshot of one root
+dredge forget --all                  # remove every snapshot
+```
+
+`forget` removes only files in the data directory that carry dredge's snapshot header (and temp
+files from interrupted writes, older than an hour). A snapshot of a drive that is not plugged in
+is kept by `--prune`. Set `DREDGE_MAX_DATA` (for example `500M`) to cap the data directory: after
+each scan dredge removes unused snapshots, then the oldest, and never the one it just wrote. The
+cap is off by default, and when set it applies to MCP `disk_scan` too. `forget` itself is not
+available over MCP.
 
 Global flags: `--pretty`, `--verbose` (every extra field on each row), and `--data-dir <DIR>`.
 `dredge scan` also takes `--threads <N>` and `--quiet`.
@@ -100,6 +123,7 @@ server with an agent client, see [docs/INSTALL.md](docs/INSTALL.md).
 |---|---|
 | `DREDGE_FOCUS_ROOTS` | Roots you mostly work in, as a path list (`;` on Windows, `:` elsewhere). `dredge scan` with no path scans them. |
 | `DREDGE_DATA_DIR` | Snapshot directory. |
+| `DREDGE_MAX_DATA` | Optional size cap for the snapshot directory, such as `500M` or `2G` (binary units). Off by default. |
 | `DREDGE_MCP_IDLE_SECS` | Seconds before the MCP server drops its loaded index (default 120). |
 
 ## Documentation

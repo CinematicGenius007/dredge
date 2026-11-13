@@ -8,7 +8,7 @@ use crate::error::Error;
 use crate::model::ScanErrors;
 use crate::scanner::ProgressSnapshot;
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Serialize, JsonSchema)]
 pub struct Envelope<R, S> {
@@ -177,6 +177,11 @@ pub struct SnapshotRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volume_id: Option<String>,
     pub format_version: u32,
+    /// False when the root path is gone (one `stat`, links not followed).
+    pub root_exists: bool,
+    /// Root of a newer snapshot covering this one's whole root; no query uses this one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadowed_by: Option<String>,
 }
 
 /// A configured root that agents mostly work in (`DREDGE_FOCUS_ROOTS`).
@@ -203,6 +208,46 @@ pub struct VolumesSummary {
 #[derive(Serialize, JsonSchema)]
 pub struct SnapshotsSummary {
     pub snapshots: usize,
+    pub data_dir: String,
+    /// Size of every snapshot file together.
+    pub file_bytes: u64,
+    pub human: String,
+    /// Files `dredge forget --prune` would remove now (snapshots, unreadable files, temp files).
+    pub prunable: usize,
+    pub prunable_bytes: u64,
+    /// Temp files left by writes that never finished, older than an hour.
+    pub temp_files: usize,
+    pub temp_bytes: u64,
+}
+
+/// Row for `forget`: one of dredge's own files in the data directory.
+#[derive(Serialize, JsonSchema)]
+pub struct ForgetRecord {
+    /// Absent when the file's header cannot be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    pub file: String,
+    pub file_bytes: u64,
+    /// `requested`, `all`, `shadowed`, `root_missing`, `unsupported_format`, `corrupt`,
+    /// `temp_file`, or `max_data` (evicted by the `DREDGE_MAX_DATA` cap).
+    pub reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadowed_by: Option<String>,
+    /// False on a dry run, or when removal failed (`error` says why).
+    pub removed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct ForgetSummary {
+    /// Files removed (on a dry run, files that would be removed).
+    pub removed: usize,
+    pub freed_bytes: u64,
+    pub human: String,
+    pub dry_run: bool,
+    /// Readable snapshots left afterwards.
+    pub remaining: usize,
     pub data_dir: String,
 }
 
@@ -244,6 +289,9 @@ pub struct ScanSummary {
     /// Volume used space the scan could not attribute (metadata, shadow copies, unreadable folders).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unaccounted_bytes: Option<u64>,
+    /// Roots whose snapshots the `DREDGE_MAX_DATA` cap removed after this scan.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub evicted: Vec<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -357,6 +405,7 @@ pub type InsightsOut = Envelope<InsightRecord, InsightsSummary>;
 pub type DetailOut = Envelope<EntryRecord, DetailSummary>;
 pub type JobOut = Envelope<NoRecord, JobSummary>;
 pub type DoctorOut = Envelope<DoctorRecord, DoctorSummary>;
+pub type ForgetOut = Envelope<ForgetRecord, ForgetSummary>;
 
 /// Any document a command can produce.
 pub enum Output {
@@ -371,6 +420,7 @@ pub enum Output {
     Detail(DetailOut),
     Job(JobOut),
     Doctor(DoctorOut),
+    Forget(ForgetOut),
     Error(ErrorEnvelope),
 }
 
@@ -417,6 +467,7 @@ impl Output {
             Output::Detail(e) => to_json(e, pretty),
             Output::Job(e) => to_json(e, pretty),
             Output::Doctor(e) => to_json(e, pretty),
+            Output::Forget(e) => to_json(e, pretty),
             Output::Error(e) => to_json(e, pretty),
         }
     }
@@ -437,6 +488,7 @@ struct SchemaDoc {
     detail: DetailOut,
     job: JobOut,
     doctor: DoctorOut,
+    forget: ForgetOut,
     error: ErrorEnvelope,
 }
 

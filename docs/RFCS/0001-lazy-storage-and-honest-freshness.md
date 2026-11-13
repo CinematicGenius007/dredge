@@ -148,7 +148,7 @@ flagged and unentered).
 
 ## Output change
 
-`schema_version` 3 → 4. Additive fields in the envelope and in `scan`; no field is removed or
+`schema_version` 4 → 5 (4 is taken by RFC 0002). Additive fields in the envelope and in `scan`; no field is removed or
 renamed. `docs/OUTPUT_SCHEMA.md` diff:
 
 ```diff
