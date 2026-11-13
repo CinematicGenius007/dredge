@@ -123,7 +123,8 @@ pub enum Effect {
     Quit,
 }
 
-/// One level of the browse stack. `sel` and `offset` index the visible (filtered) rows.
+/// One level of the browse stack. `sel` and `offset` index the rows on screen: `../` (when
+/// shown) and then the visible (filtered) entries.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Level {
     pub listing: Listing,
