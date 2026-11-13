@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::categories::{self, Classes};
 use crate::error::Error;
 use crate::model::{Index, IndexMeta};
 use crate::output::{
-    Envelope, ErrorCounts, FocusRoot, Output, ScanOut, ScanSummary, SnapshotRecord, SnapshotRef,
-    SnapshotsOut, SnapshotsSummary, VolumeRecord, VolumesOut, VolumesSummary,
+    CategoriesOut, DoctorOut, DoctorRecord, DoctorSummary, Envelope, ErrorCounts, FocusRoot,
+    InsightsOut, Output, ScanOut, ScanSummary, SnapshotRecord, SnapshotRef, SnapshotsOut,
+    SnapshotsSummary, VolumeRecord, VolumesOut, VolumesSummary,
 };
 use crate::query::{self, DEFAULT_LIMIT, MAX_LIMIT};
 use crate::scanner::{ScanOptions, ScanProgress, Scanner};
@@ -58,6 +60,7 @@ impl EngineConfig {
 pub enum Query {
     Volumes,
     Snapshots,
+    Doctor,
     Browse {
         path: String,
         limit: Option<usize>,
@@ -72,6 +75,14 @@ pub enum Query {
         path: String,
         limit: Option<usize>,
     },
+    Categories {
+        path: String,
+        limit: Option<usize>,
+    },
+    Insights {
+        path: String,
+        limit: Option<usize>,
+    },
     Detail {
         path: String,
     },
@@ -81,6 +92,8 @@ struct Cached {
     file: PathBuf,
     taken_at: i64,
     index: Arc<Index>,
+    /// Category of every node, computed on first use and kept with the index it describes.
+    classes: Option<Arc<Classes>>,
     last_used: Instant,
 }
 
@@ -170,10 +183,13 @@ impl Engine {
         match q {
             Query::Volumes => Ok(Output::Volumes(self.volumes_out())),
             Query::Snapshots => Ok(Output::Snapshots(self.snapshots_out())),
+            Query::Doctor => Ok(Output::Doctor(self.doctor())),
             Query::Browse { path, limit } => {
                 let limit = limit_or_default(*limit)?;
                 let (idx, abs, sref) = self.open(path)?;
-                let (recs, sum) = query::browse(&idx, &abs, limit, self.verbose)?;
+                let classes = self.verbose.then(|| self.classes(&idx));
+                let (recs, sum) =
+                    query::browse(&idx, &abs, limit, self.verbose, classes.as_deref())?;
                 Ok(Output::Browse(Envelope::new(
                     "browse",
                     Some(sref),
@@ -189,8 +205,16 @@ impl Engine {
             } => {
                 let limit = limit_or_default(*limit)?;
                 let (idx, abs, sref) = self.open(path)?;
-                let (recs, sum) =
-                    query::largest(&idx, &abs, ext.as_deref(), *min_bytes, limit, self.verbose)?;
+                let classes = self.verbose.then(|| self.classes(&idx));
+                let (recs, sum) = query::largest(
+                    &idx,
+                    &abs,
+                    ext.as_deref(),
+                    *min_bytes,
+                    limit,
+                    self.verbose,
+                    classes.as_deref(),
+                )?;
                 Ok(Output::Largest(Envelope::new(
                     "largest",
                     Some(sref),
@@ -204,9 +228,14 @@ impl Engine {
                 let (recs, sum) = query::types(&idx, &abs, limit)?;
                 Ok(Output::Types(Envelope::new("types", Some(sref), recs, sum)))
             }
+            Query::Categories { path, limit } => {
+                Ok(Output::Categories(self.categories(path, *limit)?))
+            }
+            Query::Insights { path, limit } => Ok(Output::Insights(self.insights(path, *limit)?)),
             Query::Detail { path } => {
                 let (idx, abs, sref) = self.open(path)?;
-                let (recs, sum) = query::detail(&idx, &abs)?;
+                let classes = self.classes(&idx);
+                let (recs, sum) = query::detail(&idx, &abs, Some(&classes))?;
                 Ok(Output::Detail(Envelope::new(
                     "detail",
                     Some(sref),
@@ -215,6 +244,48 @@ impl Engine {
                 )))
             }
         }
+    }
+
+    /// Space under `path` grouped by category, largest first (`Query::Categories`). The rows
+    /// sum to the path's allocated bytes. The classification is one linear pass over the
+    /// snapshot, computed once and cached with the loaded index.
+    pub fn categories(&self, path: &str, limit: Option<usize>) -> Result<CategoriesOut, Error> {
+        let limit = limit_or_default(limit)?;
+        let (idx, abs, sref) = self.open(path)?;
+        let node = query::resolve(&idx, &abs)?;
+        let classes = self.classes(&idx);
+        let (recs, sum) = categories::categories(&idx, &classes, node, limit);
+        Ok(Envelope::new("categories", Some(sref), recs, sum))
+    }
+
+    /// Cleanup hints under `path`, largest first (`Query::Insights`). Each carries a suggested
+    /// command as text; dredge never runs it.
+    pub fn insights(&self, path: &str, limit: Option<usize>) -> Result<InsightsOut, Error> {
+        let limit = limit_or_default(limit)?;
+        let (idx, abs, sref) = self.open(path)?;
+        let node = query::resolve(&idx, &abs)?;
+        let classes = self.classes(&idx);
+        let (recs, sum) = categories::insights(&idx, &classes, node, limit, categories::host_os());
+        Ok(Envelope::new("insights", Some(sref), recs, sum))
+    }
+
+    /// The cached classification of `idx`, computed outside the lock on first use.
+    fn classes(&self, idx: &Arc<Index>) -> Arc<Classes> {
+        if let Some(c) = self
+            .cache()
+            .as_ref()
+            .filter(|e| Arc::ptr_eq(&e.index, idx))
+            .and_then(|e| e.classes.clone())
+        {
+            return c;
+        }
+        let classes = Arc::new(categories::classify(idx, categories::host_os()));
+        if let Some(e) = self.cache().as_mut() {
+            if Arc::ptr_eq(&e.index, idx) {
+                e.classes = Some(classes.clone());
+            }
+        }
+        classes
     }
 
     /// Find the newest snapshot covering `path`, loading it unless it is already cached.
@@ -241,6 +312,7 @@ impl Engine {
             file: snap.path,
             taken_at: snap.meta.taken_at,
             index: index.clone(),
+            classes: None,
             last_used: Instant::now(),
         });
         Ok((index, abs, sref))
@@ -381,6 +453,156 @@ impl Engine {
         };
         Envelope::new("snapshots", None, records, summary)
     }
+
+    /// Read-only diagnostics for the snapshot store and configured focus roots.
+    pub fn doctor(&self) -> DoctorOut {
+        use std::fs;
+        let dir = self.store.dir();
+        let mut records = Vec::new();
+        let exists = dir.is_dir();
+        let writable = fs::metadata(dir).ok().is_some_and(|m| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                m.permissions().mode() & 0o222 != 0
+            }
+            #[cfg(windows)]
+            {
+                !m.permissions().readonly()
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                !m.permissions().readonly()
+            }
+        });
+        records.push(DoctorRecord {
+            check: "data_dir".into(),
+            status: if exists && writable { "ok" } else { "warn" },
+            message: format!(
+                "{}; {}",
+                if exists { "exists" } else { "does not exist" },
+                if writable {
+                    "permissions allow writing"
+                } else {
+                    "write permission could not be confirmed"
+                }
+            ),
+            hint: (!exists).then(|| "Run dredge scan to create the data directory.".into()),
+        });
+
+        let paths: Vec<_> = fs::read_dir(dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "dredge"))
+            .collect();
+        records.push(DoctorRecord {
+            check: "snapshot_count".into(),
+            status: "ok",
+            message: format!("{} snapshot file(s) found", paths.len()),
+            hint: None,
+        });
+        for p in &paths {
+            let key = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            match crate::snapshot::read_header(p) {
+                Ok(_meta) => records.push(DoctorRecord {
+                    check: format!("snapshot_header:{key}"),
+                    status: "ok",
+                    message: format!(
+                        "header parses; snapshot format version {}",
+                        crate::snapshot::FORMAT_VERSION
+                    ),
+                    hint: None,
+                }),
+                Err(e) => records.push(DoctorRecord {
+                    check: format!("snapshot_header:{key}"),
+                    status: "warn",
+                    message: format!("corrupt or unreadable snapshot: {e}"),
+                    hint: Some("Rescan this root to replace the snapshot.".into()),
+                }),
+            }
+        }
+        records.push(DoctorRecord {
+            check: "snapshot_format".into(),
+            status: "ok",
+            message: format!(
+                "supported snapshot format version {}",
+                crate::snapshot::FORMAT_VERSION
+            ),
+            hint: None,
+        });
+
+        let data_path = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let volume = volumes::list()
+            .into_iter()
+            .filter(|v| data_path.starts_with(&v.mount))
+            .max_by_key(|v| v.mount.len());
+        if let Some(v) = volume {
+            records.push(DoctorRecord {
+                check: "disk_free".into(),
+                status: "ok",
+                message: format!("{} available on {}", human_bytes(v.free), v.mount),
+                hint: None,
+            });
+        } else {
+            records.push(DoctorRecord {
+                check: "disk_free".into(),
+                status: "warn",
+                message: "free space for the data directory volume is unavailable".into(),
+                hint: None,
+            });
+        }
+
+        let snaps = self.store.list();
+        for p in &self.focus_roots {
+            if !Path::new(p).exists() {
+                records.push(DoctorRecord {
+                    check: format!("focus_root:{p}"),
+                    status: "warn",
+                    message: "configured focus root does not exist".into(),
+                    hint: None,
+                });
+            }
+            let cover = snaps
+                .iter()
+                .find(|s| covers(&s.meta.root, p, s.meta.case_insensitive));
+            records.push(DoctorRecord {
+                check: format!("focus_scan:{p}"),
+                status: if cover.is_some() { "ok" } else { "warn" },
+                message: cover
+                    .map(|s| {
+                        format!(
+                            "scanned; snapshot age {} seconds",
+                            age_secs(s.meta.taken_at)
+                        )
+                    })
+                    .unwrap_or_else(|| "no snapshot covers this focus root".into()),
+                hint: cover
+                    .is_none()
+                    .then(|| "Run dredge scan for this root.".into()),
+            });
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(home) = dirs::home_dir() {
+            let protected = home.join("Library/Safari");
+            if let Err(e) = fs::read_dir(protected) {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    records.push(DoctorRecord { check: "full_disk_access".into(), status: "warn", message: "Full Disk Access may be limited".into(), hint: Some("Review macOS Privacy & Security settings if protected folders need scanning.".into()) });
+                }
+            }
+        }
+        let summary = DoctorSummary {
+            checks: records.len(),
+            data_dir: dir.display().to_string(),
+        };
+        Envelope::new("doctor", None, records, summary)
+    }
 }
 
 #[cfg(test)]
@@ -450,7 +672,7 @@ mod tests {
             .render(false);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["kind"], "browse");
-        assert_eq!(v["schema_version"], 1);
+        assert_eq!(v["schema_version"], 3);
         assert_eq!(v["records"][0]["name"], "sub");
         assert!(v["snapshot"]["age_secs"].is_u64());
         assert!(e.is_loaded());

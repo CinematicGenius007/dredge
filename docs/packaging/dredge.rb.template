@@ -1,0 +1,16 @@
+# TEMPLATE ONLY — not published. Replace every placeholder before submitting a formula.
+class Dredge < Formula
+  desc "Read-only disk-space explorer and MCP server"
+  homepage "https://github.com/OWNER/dredge"
+  version "0.0.0"
+  url "https://github.com/OWNER/dredge/releases/download/v0.0.0/dredge-v0.0.0-x86_64-apple-darwin.tar.gz"
+  sha256 "REPLACE_WITH_RELEASE_SHA256"
+
+  def install
+    bin.install "dredge"
+  end
+
+  test do
+    assert_match "dredge", shell_output("#{bin}/dredge --version")
+  end
+end

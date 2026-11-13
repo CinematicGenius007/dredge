@@ -37,3 +37,14 @@ per node plus names (see `ARCHITECTURE.md`).
 Queries run on an in-memory index, so they should be effectively instant. Loading a snapshot is the
 expensive step; time `dredge browse <root>` right after `dredge scan <root>` in a fresh process to
 measure the load path.
+
+## CI regression floor
+
+The optional Ubuntu CI benchmark creates 3,000 tiny files in 30 directories, runs the release
+`bench_scan` example, and fails below `.github/bench-floor.txt` (currently 150,000 files/sec).
+This is about 23% of the local 645,416 files/sec measurement on the same fixture, deliberately
+leaving substantial headroom for noisy hosted runners. It runs only on pushes to `main` and manual
+dispatches. To refresh the floor, regenerate the same fixture shape, run
+`cargo run --release -p dredge-scan --example bench_scan -- <fixture>`, repeat several times,
+choose roughly 25% of the lowest representative local throughput, and update the floor file and
+this note together. CI workflows cannot be run locally; the benchmark command itself is runnable.

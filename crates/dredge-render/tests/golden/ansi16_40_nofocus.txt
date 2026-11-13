@@ -1,0 +1,17 @@
+/data  164.8 GiB of 465.7 GiB (35.4%)
+\e[34;40m▀\e[30;44m▀\e[34;40m▀\e[30;40m▀\e[90;40m▀\e[30;100m▀\e[90;40m▀\e[30;40m▀\e[32;40m▀\e[30;42m▀\e[95;40m▀\e[30;40m▀\e[91;40m▀\e[30;46m▀\e[37;40m▀\e[30;40m▀\e[31;40m▀\e[30;40m▀▀▀\e[90;40m▀\e[30;40m▀▀▀\e[90;40m▀\e[30;40m▀▀▀\e[90;40m▀\e[30;40m▀▀▀\e[90;40m▀\e[30;40m▀▀▀\e[90;40m▀\e[30;40m▀▀▀\e[0m
+\e[34;40m▀\e[30;40m▀\e[34;40m▀\e[30;44m▀\e[90;40m▀\e[30;40m▀\e[90;40m▀\e[30;42m▀\e[32;40m▀\e[30;40m▀\e[95;40m▀\e[30;45m▀\e[91;40m▀\e[30;40m▀\e[37;40m▀\e[30;43m▀\e[31;40m▀\e[30;40m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\e[0m
+
+\e[34m■\e[0m Apps       48.4 GiB
+\e[90m■\e[0m System     37.3 GiB
+\e[32m■\e[0m Developer  28.9 GiB
+\e[95m■\e[0m Photos     16.8 GiB
+\e[35m■\e[0m Movies     11.2 GiB
+\e[91m■\e[0m Caches      8.4 GiB
+\e[36m■\e[0m Documents   5.6 GiB
+\e[37m■\e[0m Other       4.7 GiB
+\e[33m■\e[0m Music       1.9 GiB
+\e[31m■\e[0m Trash     976.6 KiB
+\e[90m■\e[0m Free      300.8 GiB
+
+Tip: node_modules under /data/proj is 4…

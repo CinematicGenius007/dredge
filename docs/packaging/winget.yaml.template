@@ -1,0 +1,18 @@
+# TEMPLATE ONLY — not published. Replace identifiers, URLs, and hashes before submission.
+PackageIdentifier: OWNER.Dredge
+PackageVersion: 0.0.0
+PackageName: dredge
+Publisher: OWNER
+License: MIT
+ShortDescription: Read-only disk-space explorer and MCP server
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/OWNER/dredge/releases/download/v0.0.0/dredge-v0.0.0-x86_64-pc-windows-msvc.zip
+    InstallerSha256: REPLACE_WITH_RELEASE_SHA256
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: dredge.exe
+        PortableCommandAlias: dredge
+ManifestType: singleton
+ManifestVersion: 1.6.0

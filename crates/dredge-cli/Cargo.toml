@@ -13,7 +13,15 @@ path = "src/main.rs"
 dredge-core.workspace = true
 dredge-scan.workspace = true
 dredge-mcp.workspace = true
+dredge-render.workspace = true
+dredge-tui = { workspace = true, optional = true }
 clap.workspace = true
+clap_complete.workspace = true
+
+[features]
+default = ["tui"]
+# `dredge tui`; build with --no-default-features for a smaller binary that keeps `bar` and `mcp`
+tui = ["dep:dredge-tui"]
 
 [dev-dependencies]
 tempfile.workspace = true

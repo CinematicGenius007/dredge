@@ -1,0 +1,16 @@
+[package]
+name = "dredge-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+crossterm.workspace = true
+dredge-core.workspace = true
+dredge-render.workspace = true
+ratatui.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

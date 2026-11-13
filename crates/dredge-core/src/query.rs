@@ -7,6 +7,7 @@ use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
 
+use crate::categories::Classes;
 use crate::error::Error;
 use crate::model::{Index, Kind, FLAG_ALIAS, FLAG_NAMES};
 use crate::output::{
@@ -24,15 +25,16 @@ enum Share {
     OfScope(u64),
 }
 
-fn resolve(idx: &Index, path: &str) -> Result<u32, Error> {
+pub(crate) fn resolve(idx: &Index, path: &str) -> Result<u32, Error> {
     idx.resolve(path).ok_or_else(|| Error::PathNotInSnapshot {
         path: path.to_string(),
         root: idx.meta.root.clone(),
     })
 }
 
-/// Build one output row. `full` adds every extra field (verbose output and `detail`).
-fn entry(idx: &Index, i: u32, share: Share, full: bool) -> EntryRecord {
+/// Build one output row. `full` adds every extra field (verbose output and `detail`), including
+/// the category when `classes` is given.
+fn entry(idx: &Index, i: u32, share: Share, full: bool, classes: Option<&Classes>) -> EntryRecord {
     let flags = idx.flags(i);
     let kind = idx.kind(i);
     let alloc = idx.allocated(i);
@@ -50,6 +52,7 @@ fn entry(idx: &Index, i: u32, share: Share, full: bool) -> EntryRecord {
         name: idx.name(i).to_string(),
         path: idx.path(i),
         kind: kind.as_str(),
+        category: classes.filter(|_| full).and_then(|c| c.category(i)),
         allocated_bytes: alloc,
         human: human_bytes(alloc),
         pct_of_parent,
@@ -72,6 +75,7 @@ pub fn browse(
     path: &str,
     limit: usize,
     verbose: bool,
+    classes: Option<&Classes>,
 ) -> Result<(Vec<EntryRecord>, BrowseSummary), Error> {
     let node = resolve(idx, path)?;
     let total = idx.allocated(node);
@@ -83,7 +87,7 @@ pub fn browse(
     let shown = kids.len().min(limit);
     let records = kids[..shown]
         .iter()
-        .map(|&c| entry(idx, c, Share::OfParent, verbose))
+        .map(|&c| entry(idx, c, Share::OfParent, verbose, classes))
         .collect();
     let remaining_bytes = kids[shown..].iter().map(|&c| idx.allocated(c)).sum::<u64>();
     Ok((
@@ -116,6 +120,7 @@ pub fn largest(
     min_bytes: Option<u64>,
     limit: usize,
     verbose: bool,
+    classes: Option<&Classes>,
 ) -> Result<(Vec<EntryRecord>, LargestSummary), Error> {
     let node = resolve(idx, path)?;
     let total = idx.allocated(node);
@@ -152,7 +157,7 @@ pub fn largest(
     let records: Vec<EntryRecord> = heap
         .into_sorted_vec()
         .into_iter()
-        .map(|Reverse((_, Reverse(i)))| entry(idx, i, Share::OfScope(total), verbose))
+        .map(|Reverse((_, Reverse(i)))| entry(idx, i, Share::OfScope(total), verbose, classes))
         .collect();
     let shown = records.len();
     Ok((
@@ -230,10 +235,14 @@ pub fn types(
     ))
 }
 
-pub fn detail(idx: &Index, path: &str) -> Result<(Vec<EntryRecord>, DetailSummary), Error> {
+pub fn detail(
+    idx: &Index,
+    path: &str,
+    classes: Option<&Classes>,
+) -> Result<(Vec<EntryRecord>, DetailSummary), Error> {
     let node = resolve(idx, path)?;
     Ok((
-        vec![entry(idx, node, Share::OfParent, true)],
+        vec![entry(idx, node, Share::OfParent, true, classes)],
         DetailSummary {
             path: idx.path(node),
             parent: (node != 0).then(|| idx.path(idx.parent(node))),
@@ -283,7 +292,7 @@ mod tests {
     #[test]
     fn browse_is_sorted_and_truncates() {
         let (idx, r) = sample();
-        let (recs, sum) = browse(&idx, &r, 2, false).unwrap();
+        let (recs, sum) = browse(&idx, &r, 2, false, None).unwrap();
         assert_eq!(recs[0].name, "big.bin");
         assert_eq!(recs[1].name, "logs");
         assert_eq!(sum.entries, 4);
@@ -298,7 +307,7 @@ mod tests {
     #[test]
     fn largest_filters_by_ext_case_insensitively() {
         let (idx, r) = sample();
-        let (recs, sum) = largest(&idx, &r, Some(".log"), None, 10, false).unwrap();
+        let (recs, sum) = largest(&idx, &r, Some(".log"), None, 10, false, None).unwrap();
         let names: Vec<&str> = recs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["a.LOG", "b.log"]);
         assert_eq!(sum.matched_files, 2);
@@ -309,7 +318,7 @@ mod tests {
     #[test]
     fn largest_min_bytes_and_limit() {
         let (idx, r) = sample();
-        let (recs, sum) = largest(&idx, &r, None, Some(150), 1, false).unwrap();
+        let (recs, sum) = largest(&idx, &r, None, Some(150), 1, false, None).unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].name, "big.bin");
         assert_eq!(sum.matched_files, 3);
@@ -334,14 +343,14 @@ mod tests {
     fn detail_and_missing_paths() {
         let (idx, r) = sample();
         let p = join(&r, "logs");
-        let (recs, sum) = detail(&idx, &p).unwrap();
+        let (recs, sum) = detail(&idx, &p, None).unwrap();
         assert_eq!(recs[0].files, Some(3));
         assert_eq!(recs[0].dirs, Some(0));
         assert_eq!(sum.depth, 1);
         assert_eq!(sum.parent.as_deref(), Some(r.as_str()));
         let missing = join(&r, "nope");
         assert!(matches!(
-            detail(&idx, &missing),
+            detail(&idx, &missing, None),
             Err(Error::PathNotInSnapshot { .. })
         ));
     }

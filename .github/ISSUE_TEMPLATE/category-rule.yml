@@ -1,0 +1,76 @@
+name: Category rule
+description: Propose a rule that classifies a kind of space, or a cleanup hint
+labels: ["category-rule"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A rule needs a source link and a test. A wrong "safe to remove" hint does real harm, so
+        cite where the rule comes from. See CONTRIBUTING.md, "Adding a category rule".
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Apps
+        - Developer
+        - Photos
+        - Movies
+        - Music
+        - Documents
+        - Caches
+        - Trash
+        - System
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - All
+    validations:
+      required: true
+  - type: textarea
+    id: match
+    attributes:
+      label: Match
+      description: The path glob(s) and/or file extension(s) the rule matches.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Example paths
+      description: Paths that should match, and paths that should not. Redact user names.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source link
+      description: Vendor documentation, an OS convention, or the documentation of the tool that creates these files.
+    validations:
+      required: true
+  - type: dropdown
+    id: hint
+    attributes:
+      label: Does this rule add a cleanup hint?
+      options:
+        - "No, classification only"
+        - "Yes, a suggested command (text only, never run)"
+    validations:
+      required: true
+  - type: checkboxes
+    id: test
+    attributes:
+      label: Checks
+      options:
+        - label: I will add a test with a tempfile fixture that shows the rule matches and does not over-match.
+          required: true

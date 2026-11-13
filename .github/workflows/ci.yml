@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,3 +26,64 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Build without the tui feature
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo clippy -p dredge-cli --no-default-features -- -D warnings
+          cargo build -p dredge-cli --no-default-features
+
+  deny:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny check
+
+  audit:
+    name: Security advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+  bench:
+    name: Scan benchmark floor
+    continue-on-error: false
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate fixture tree
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('target/bench-fixture')
+          for d in range(30):
+              folder = root / f'dir-{d:02d}'
+              folder.mkdir(parents=True, exist_ok=True)
+              for f in range(100):
+                  (folder / f'file-{f:03d}.dat').write_bytes(b'x' * 64)
+          PY
+      - name: Measure scan and enforce floor
+        run: |
+          cargo run --release -p dredge-scan --example bench_scan -- target/bench-fixture | tee target/bench-result.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          result = Path('target/bench-result.txt').read_text()
+          actual = int(re.search(r'files_per_sec=(\d+)', result).group(1))
+          floor = int(Path('.github/bench-floor.txt').read_text().strip())
+          print(f'benchmark={actual} files/sec, required floor={floor}')
+          if actual < floor:
+              raise SystemExit('scan throughput is below the checked-in floor')
+          PY

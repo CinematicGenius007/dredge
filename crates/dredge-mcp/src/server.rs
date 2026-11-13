@@ -15,9 +15,11 @@ use crate::jobs::Jobs;
 const INSTRUCTIONS: &str = "Disk space explorer over saved scan snapshots. Start with \
 disk_volumes (free space, snapshot age, focus roots). If a path has no snapshot, run \
 disk_scan and poll disk_job_status. Then drill down: disk_browse (children of a path, \
-largest first), disk_largest (biggest files), disk_types (space by extension), disk_detail \
+largest first), disk_largest (biggest files), disk_types (space by extension), \
+disk_categories (space by kind: developer, caches, photos, ...), disk_insights (regenerable \
+space with a suggested command for the user to review; never run by dredge), disk_detail \
 (one path). Results are small and sorted by size; raise `limit` only if needed. Sizes are \
-allocated bytes on disk. Check `snapshot.age_secs` and rescan if the data is stale.";
+allocated bytes on disk. Use disk_doctor for read-only health checks. Check `snapshot.age_secs` and rescan if the data is stale.";
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct ScanParams {
@@ -107,6 +109,14 @@ whether the focus roots are scanned. Call this first.",
     )]
     async fn disk_volumes(&self) -> Result<CallToolResult, McpError> {
         self.query(Query::Volumes).await
+    }
+
+    #[tool(
+        description = "Read-only health check for the data directory, snapshots, focus roots, and available space.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn disk_doctor(&self) -> Result<CallToolResult, McpError> {
+        self.query(Query::Doctor).await
     }
 
     #[tool(
@@ -202,6 +212,38 @@ minimum size.",
         .await
     }
 
+    #[tool(
+        description = "Space under a path grouped by category (apps, developer, photos, movies, \
+music, documents, caches, trash, system, other), largest first, with the top paths of each. \
+Categories sum to the path's total.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn disk_categories(
+        &self,
+        Parameters(p): Parameters<TypesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.query(Query::Categories {
+            path: p.path,
+            limit: p.limit,
+        })
+        .await
+    }
+    #[tool(
+        description = "Cleanup hints under a path: large regenerable directories (node_modules, \
+package-manager caches, build data, user caches, Trash). Each has a suggested_command as text \
+for the user to review; dredge never runs it.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn disk_insights(
+        &self,
+        Parameters(p): Parameters<TypesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.query(Query::Insights {
+            path: p.path,
+            limit: p.limit,
+        })
+        .await
+    }
     #[tool(
         description = "Full details for one file or directory: sizes, counts, flags, modified time.",
         annotations(read_only_hint = true, open_world_hint = false)

@@ -8,7 +8,7 @@ use crate::error::Error;
 use crate::model::ScanErrors;
 use crate::scanner::ProgressSnapshot;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Serialize, JsonSchema)]
 pub struct Envelope<R, S> {
@@ -67,6 +67,9 @@ pub struct EntryRecord {
     pub path: String,
     /// `file`, `dir`, `symlink`, `junction` or `reparse`. Links are never followed.
     pub kind: &'static str,
+    /// Verbose rows and `detail` only. Absent for a directory whose content spans categories.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<crate::categories::Category>,
     /// On-disk size; for directories the whole subtree. Hard-linked data is counted once.
     pub allocated_bytes: u64,
     pub human: String,
@@ -87,6 +90,53 @@ pub struct EntryRecord {
     pub dirs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified: Option<String>,
+}
+
+/// Row for `categories`.
+#[derive(Serialize, JsonSchema)]
+pub struct CategoryRecord {
+    pub category: crate::categories::Category,
+    pub allocated_bytes: u64,
+    pub human: String,
+    /// Percent of the queried path's allocated bytes, one decimal.
+    pub share: f64,
+    /// Files (non-directory entries) counted in this category.
+    pub files: u64,
+    /// Up to 3 largest paths wholly in this category, none nested in another, largest first.
+    pub top: Vec<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct CategoriesSummary {
+    pub path: String,
+    /// The queried path's allocated bytes; the rows of all categories sum to this.
+    pub allocated_bytes: u64,
+    pub human: String,
+    pub categories: usize,
+    pub shown: usize,
+    pub truncated: bool,
+}
+
+/// Row for `insights`. A hint only: dredge never runs `suggested_command`.
+#[derive(Serialize, JsonSchema)]
+pub struct InsightRecord {
+    /// Stable hint id, e.g. `node_modules`, `user_caches`, `trash`.
+    pub id: &'static str,
+    pub category: crate::categories::Category,
+    pub path: String,
+    pub allocated_bytes: u64,
+    pub human: String,
+    pub message: String,
+    /// Shell text (POSIX `sh`, or PowerShell on Windows) for the user to review and run.
+    pub suggested_command: String,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct InsightsSummary {
+    pub path: String,
+    pub insights: usize,
+    pub shown: usize,
+    pub truncated: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -153,6 +203,21 @@ pub struct VolumesSummary {
 #[derive(Serialize, JsonSchema)]
 pub struct SnapshotsSummary {
     pub snapshots: usize,
+    pub data_dir: String,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct DoctorRecord {
+    pub check: String,
+    pub status: &'static str,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct DoctorSummary {
+    pub checks: usize,
     pub data_dir: String,
 }
 
@@ -287,8 +352,11 @@ pub type SnapshotsOut = Envelope<SnapshotRecord, SnapshotsSummary>;
 pub type BrowseOut = Envelope<EntryRecord, BrowseSummary>;
 pub type LargestOut = Envelope<EntryRecord, LargestSummary>;
 pub type TypesOut = Envelope<TypeRecord, TypesSummary>;
+pub type CategoriesOut = Envelope<CategoryRecord, CategoriesSummary>;
+pub type InsightsOut = Envelope<InsightRecord, InsightsSummary>;
 pub type DetailOut = Envelope<EntryRecord, DetailSummary>;
 pub type JobOut = Envelope<NoRecord, JobSummary>;
+pub type DoctorOut = Envelope<DoctorRecord, DoctorSummary>;
 
 /// Any document a command can produce.
 pub enum Output {
@@ -298,8 +366,11 @@ pub enum Output {
     Browse(BrowseOut),
     Largest(LargestOut),
     Types(TypesOut),
+    Categories(CategoriesOut),
+    Insights(InsightsOut),
     Detail(DetailOut),
     Job(JobOut),
+    Doctor(DoctorOut),
     Error(ErrorEnvelope),
 }
 
@@ -341,8 +412,11 @@ impl Output {
             Output::Browse(e) => to_json(e, pretty),
             Output::Largest(e) => to_json(e, pretty),
             Output::Types(e) => to_json(e, pretty),
+            Output::Categories(e) => to_json(e, pretty),
+            Output::Insights(e) => to_json(e, pretty),
             Output::Detail(e) => to_json(e, pretty),
             Output::Job(e) => to_json(e, pretty),
+            Output::Doctor(e) => to_json(e, pretty),
             Output::Error(e) => to_json(e, pretty),
         }
     }
@@ -358,8 +432,11 @@ struct SchemaDoc {
     browse: BrowseOut,
     largest: LargestOut,
     types: TypesOut,
+    categories: CategoriesOut,
+    insights: InsightsOut,
     detail: DetailOut,
     job: JobOut,
+    doctor: DoctorOut,
     error: ErrorEnvelope,
 }
 
