@@ -422,17 +422,25 @@ fn schema_lists_categories_and_insights() {
     }
 }
 
-/// Snapshot age is wall-clock seconds and may tick between two calls; every other byte must match.
+/// Snapshot age is wall-clock seconds and the doctor's `disk_free` message reports live free space;
+/// both may change between two calls while other tests write to the disk. Mask them; every other
+/// byte must match.
 fn without_age(s: &str) -> String {
+    let mut out = s.to_string();
     let key = "\"age_secs\":";
-    match s.find(key) {
-        Some(p) => {
-            let rest = &s[p + key.len()..];
-            let digits = rest.chars().take_while(char::is_ascii_digit).count();
-            format!("{}{key}0{}", &s[..p], &rest[digits..])
-        }
-        None => s.to_string(),
+    if let Some(p) = out.find(key) {
+        let rest = &out[p + key.len()..];
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        out = format!("{}{key}0{}", &out[..p], &out[p + key.len() + digits..]);
     }
+    let key = "\"check\":\"disk_free\",\"status\":\"ok\",\"message\":\"";
+    if let Some(p) = out.find(key) {
+        let start = p + key.len();
+        if let Some(end) = out[start..].find('"') {
+            out = format!("{}<free>{}", &out[..start], &out[start + end..]);
+        }
+    }
+    out
 }
 
 /// Drive `dredge mcp` over stdio with JSON-RPC and return the text of each tool result.
