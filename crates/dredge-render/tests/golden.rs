@@ -51,8 +51,11 @@ fn check(name: &str, width: usize, focus: Option<usize>, caps: Caps) {
         std::fs::write(&path, &got).unwrap();
         return;
     }
+    // `.gitattributes` pins these files to LF; normalizing as well keeps the test correct in a
+    // checkout that was made before that rule applied.
     let want = std::fs::read_to_string(&path)
-        .unwrap_or_else(|_| panic!("missing golden {name}; run with DREDGE_UPDATE_GOLDEN=1"));
+        .unwrap_or_else(|_| panic!("missing golden {name}; run with DREDGE_UPDATE_GOLDEN=1"))
+        .replace("\r\n", "\n");
     assert_eq!(got, want, "{name} differs from golden");
 }
 
