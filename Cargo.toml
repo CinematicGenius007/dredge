@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -13,6 +13,8 @@ publish = false
 dredge-core = { path = "crates/dredge-core" }
 dredge-scan = { path = "crates/dredge-scan" }
 dredge-mcp = { path = "crates/dredge-mcp" }
+dredge-render = { path = "crates/dredge-render" }
+dredge-tui = { path = "crates/dredge-tui" }
 
 # serde: derive Serialize/Deserialize for the output envelope and snapshot header
 serde = { version = "1.0.229", features = ["derive"] }
@@ -24,6 +26,8 @@ schemars = "1.2.3"
 thiserror = "2.0.21"
 # anyhow: error plumbing in binaries only
 anyhow = "1.0.104"
+# clap_complete: generate shell completion scripts from the CLI command definition
+clap_complete = "4.6.11"
 # clap: argument parsing for the CLI
 clap = { version = "4.6.7", features = ["derive"] }
 # rayon: work-stealing pool for parallel directory scanning
@@ -39,7 +43,7 @@ rustc-hash = "2.1.3"
 # jiff: RFC 3339 timestamps and snapshot age
 jiff = "0.2.38"
 # rmcp: official Rust MCP SDK
-rmcp = { version = "3.8.0", features = ["server", "transport-io"] }
+rmcp = { version = "3.9.0", features = ["server", "transport-io"] }
 # tokio: async runtime required by rmcp; also scan jobs and idle timers
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 # tempfile: fixture trees in tests (dev only)
@@ -55,3 +59,9 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
 ] }
+# ratatui: terminal UI widgets and buffer for `dredge tui` (crossterm backend only; the default termwiz backend is not needed)
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+# unicode-width: measure terminal display columns for TUI text.
+unicode-width = "0.2"
+# crossterm: raw mode, alternate screen and input events for `dredge tui` (same version ratatui uses)
+crossterm = "0.29.0"

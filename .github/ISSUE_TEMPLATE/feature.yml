@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a new capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to find out or do, and why the current commands do not do it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The command, MCP tool or output you have in mind. Keep it to what dredge would show.
+    validations:
+      required: true
+  - type: dropdown
+    id: output-change
+    attributes:
+      label: Does this change the output?
+      description: Any new or changed field, kind or envelope is an output change.
+      options:
+        - No, existing output is unchanged
+        - Yes, new or changed fields on existing kinds
+        - Yes, a new query or kind
+    validations:
+      required: true
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Checks
+      options:
+        - label: I understand that an output change or a new query needs an RFC first (docs/RFCS/README.md).
+        - label: This keeps dredge read-only and local. It writes nothing outside the snapshot directory and makes no network calls.
+        - label: This does not add a delete, move or cleanup action. Cleanup may only be suggested as text.
+          required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

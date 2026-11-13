@@ -167,8 +167,8 @@ impl IndexBuilder {
         }
         let mut fill = first.clone();
         let mut kids = vec![0u32; n - 1];
-        for i in 1..n {
-            let p = self.parent[i] as usize;
+        for (i, &p) in self.parent.iter().enumerate().take(n).skip(1) {
+            let p = p as usize;
             kids[fill[p] as usize] = i as u32;
             fill[p] += 1;
         }

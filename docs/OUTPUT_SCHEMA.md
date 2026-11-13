@@ -1,11 +1,18 @@
-# dredge output schema (version 1)
+# dredge output schema (version 3)
 
-Status: **draft for approval**. `dredge schema` prints the machine-readable JSON Schema,
+Status: **approved**. `dredge schema` prints the machine-readable JSON Schema,
 generated from the same Rust types the commands return. This file is the human guide.
 
 ## Conventions
 
 - stdout is **exactly one JSON document**. Diagnostics and progress go to stderr.
+  Exception: `dredge bar` and `dredge tui` are presentation commands. They print text,
+  not an envelope, have no schema, and report errors on stderr with a nonzero exit. They never
+  pass file-derived text (paths, labels, suggested commands) to the terminal raw: every control
+  character (Unicode `Cc`, U+2028/2029, bidi controls U+202A-202E and U+2066-2069) is shown as a
+  visible escape such as `\u{1b}`, so the only escape bytes in their output are the renderer's
+  own color sequences, and none at all with `--color never`. The TUI copies a suggested command
+  verbatim, but refuses to copy one that contains control characters.
 - Compact by default; `--pretty` indents. MCP tools always return compact JSON.
 - Nonzero exit on failure, and stdout then carries a `kind: "error"` document.
 - All sizes are bytes (JSON numbers). **Allocated** = space on disk, the number to
@@ -24,7 +31,7 @@ generated from the same Rust types the commands return. This file is the human g
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "kind": "browse",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [ ... ],
@@ -35,8 +42,8 @@ generated from the same Rust types the commands return. This file is the human g
 | Field | Meaning |
 |---|---|
 | `schema_version` | Integer, bumped on breaking change. |
-| `kind` | `volumes`, `scan`, `snapshots`, `browse`, `largest`, `types`, `detail`, `job`, `error`. |
-| `snapshot` | Present for `browse`, `largest`, `types`, `detail`, `scan`. The snapshot the answer came from. `age_secs` is the staleness signal. Includes `scan_errors` when the scan hit problems (see below). |
+| `kind` | `volumes`, `scan`, `snapshots`, `browse`, `largest`, `types`, `categories`, `insights`, `detail`, `job`, `doctor`, `error`. |
+| `snapshot` | Present for `browse`, `largest`, `types`, `categories`, `insights`, `detail`, `scan`. The snapshot the answer came from. `age_secs` is the staleness signal. Includes `scan_errors` when the scan hit problems (see below). |
 | `records` | The rows. Shape depends on `kind`. Empty array when there are none. |
 | `summary` | Aggregate facts about the query. Shape depends on `kind`. |
 
@@ -73,6 +80,7 @@ Present **only when relevant** (or always with `--verbose` / `verbose: true`):
 | `files` | `--verbose`; always in `detail` for dirs | Files in the subtree. |
 | `dirs` | `--verbose`; always in `detail` for dirs | Directories in the subtree. |
 | `modified` | `--verbose`; always in `detail` | Last write time (RFC 3339). |
+| `category` | `--verbose`; always in `detail` | Category name (see `categories`). For a directory, the one category of everything in it; omitted when its content spans several. |
 
 ## `kind: "volumes"`
 
@@ -102,7 +110,7 @@ not scanned. This is how an agent learns, in one call, what is indexed and how s
 
 ```json
 {
-  "schema_version": 1, "kind": "scan",
+  "schema_version": 3, "kind": "scan",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 0 },
   "records": [],
   "summary": {
@@ -148,7 +156,7 @@ could not attribute (filesystem metadata, shadow copies, unreadable folders).
 
 ```json
 {
-  "schema_version": 1, "kind": "browse",
+  "schema_version": 3, "kind": "browse",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "name": "AppData", "path": "C:\\Users\\me\\AppData", "kind": "dir",
@@ -175,7 +183,7 @@ directories), anywhere under `path`. `--ext` is case-insensitive, with or withou
 
 ```json
 {
-  "schema_version": 1, "kind": "largest",
+  "schema_version": 3, "kind": "largest",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "name": "ubuntu.vhdx", "path": "C:\\Users\\me\\AppData\\Local\\wsl\\ubuntu.vhdx",
@@ -200,7 +208,7 @@ not just those shown.
 
 ```json
 {
-  "schema_version": 1, "kind": "types",
+  "schema_version": 3, "kind": "types",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "ext": "vhdx", "files": 3, "allocated_bytes": 26843545600, "human": "25.0 GiB",
@@ -211,13 +219,96 @@ not just those shown.
 }
 ```
 
+## `kind: "categories"`
+
+`dredge categories <path> [--limit N]`: allocated space under `path` grouped by category,
+largest first. Categories: `apps`, `developer`, `photos`, `movies`, `music`, `documents`,
+`caches`, `trash`, `system`, `other`.
+
+```json
+{
+  "schema_version": 3, "kind": "categories",
+  "snapshot": { "root": "/Users/me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
+  "records": [
+    { "category": "developer", "allocated_bytes": 21474836480, "human": "20.0 GiB",
+      "share": 41.7, "files": 912000,
+      "top": ["/Users/me/Library/Developer/Xcode/DerivedData",
+              "/Users/me/proj/web/node_modules", "/Users/me/.cargo/registry"] }
+  ],
+  "summary": { "path": "/Users/me", "allocated_bytes": 51539607552, "human": "48.0 GiB",
+               "categories": 7, "shown": 7, "truncated": false }
+}
+```
+
+| Record field | Meaning |
+|---|---|
+| `category` | Category name. |
+| `allocated_bytes`, `human` | Allocated bytes in this category under `path`. |
+| `share` | % of `path`'s allocated bytes, one decimal. |
+| `files` | Files (non-directory entries, including links) counted in this category. |
+| `top` | Up to 3 paths, largest first, that lie wholly in this category and are not nested in each other: a directory is listed instead of its files when everything in it with bytes is in the category. |
+
+The rows of all categories (not only those shown) sum exactly to `summary.allocated_bytes`.
+
+How a node gets its category: a static rule table in `crates/dredge-core/src/categories.rs`,
+matched on names and path components only (no file is opened). The first matching rule wins;
+path and directory rules come before extension rules. Extension rules match files only; a
+directory matches an extension only for real bundle types (`.app`, `.photoslibrary`). `target`
+is `developer` only when a `Cargo.toml` file sits beside it. A directory matched by a rule claims its
+whole subtree (`node_modules/x.jpg` is `developer`). Rules for another OS never apply. Anything
+unmatched, and a mixed directory's own bytes, is `other`.
+
+## `kind: "insights"`
+
+`dredge insights <path> [--limit N]`: cleanup hints for large directories under `path` whose
+contents can be re-created, largest first. **Text only: dredge never runs `suggested_command`,
+and never deletes or moves anything.**
+
+```json
+{
+  "schema_version": 3, "kind": "insights",
+  "snapshot": { "root": "/Users/me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
+  "records": [
+    { "id": "xcode_derived_data", "category": "developer",
+      "path": "/Users/me/Library/Developer/Xcode/DerivedData",
+      "allocated_bytes": 12884901888, "human": "12.0 GiB",
+      "message": "Xcode build products and indexes; Xcode rebuilds them. Quit Xcode first.",
+      "suggested_command": "find '/Users/me/Library/Developer/Xcode/DerivedData' -xdev -mindepth 1 -delete" }
+  ],
+  "summary": { "path": "/Users/me", "insights": 4, "shown": 4, "truncated": false }
+}
+```
+
+| Record field | Meaning |
+|---|---|
+| `id` | Stable hint id: `node_modules`, `npm_cache`, `cargo_registry`, `gradle_caches`, `xcode_derived_data`, `user_caches`, `trash`. |
+| `category` | The path's category. |
+| `path`, `allocated_bytes`, `human` | The directory and its allocated size. Less may be freed when files in it are hard-linked elsewhere (the `message` says so). |
+| `message` | What the directory is and what re-creates it. |
+| `suggested_command` | POSIX `sh` text (`rm -rf -- '<path>'` or `find '<path>' -xdev -mindepth 1 -delete`), or PowerShell on Windows (`Remove-Item -LiteralPath '<path>' -Recurse -Force`, `Get-ChildItem -LiteralPath '<path>' -Force \| Remove-Item -Recurse -Force`, `Clear-RecycleBin -DriveLetter C -Force`). Paths are single-quoted with embedded quotes escaped (`'\''` for sh; doubled `'` and typographic single quotes for PowerShell). |
+
+Rules for a hint (all must hold):
+
+- The directory matches an entry of the hint table for this OS, anchored to its documented
+  location (`~/Library/Caches`, `~/.cache`, `~/.Trash`, `~/.local/share/Trash`,
+  `X:\$Recycle.Bin`, `~/Library/Developer/Xcode/DerivedData`, `.npm/_cacache`,
+  `.cargo/registry`, `.gradle/caches`).
+- `node_modules` only beside a lockfile (`package-lock.json`, `npm-shrinkwrap.json`,
+  `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`) and never inside another
+  `node_modules`, an app bundle, `Library`, `AppData`, `Program Files`, `Applications` or
+  editor extension folders.
+- At least 100 MiB allocated.
+- Nothing in it is a cloud placeholder, a mount point, a junction or other reparse point
+  (on Windows also a symlink), and no component of its path was stored lossily.
+- Nothing nested inside a hinted directory gets a second hint.
+
 ## `kind: "detail"`
 
 `dredge detail <path>`: one item. Exactly one record. All extras that apply are included.
 
 ```json
 {
-  "schema_version": 1, "kind": "detail",
+  "schema_version": 3, "kind": "detail",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "name": "node_modules", "path": "C:\\Users\\me\\proj\\node_modules", "kind": "dir",
@@ -238,7 +329,7 @@ For a hard-linked file, the record has `hard_links` and, on an alias, flag
 `disk_scan` returns immediately:
 
 ```json
-{ "schema_version": 1, "kind": "job", "records": [],
+{ "schema_version": 3, "kind": "job", "records": [],
   "summary": { "job_id": "scan-1", "state": "running", "roots": ["C:\\work", "C:\\"],
                "elapsed_ms": 3 } }
 ```
@@ -258,7 +349,7 @@ returns that job (check `roots`) instead of starting another.
 ## `kind: "error"`
 
 ```json
-{ "schema_version": 1, "kind": "error",
+{ "schema_version": 3, "kind": "error",
   "error": { "code": "no_snapshot",
              "message": "no snapshot covers C:\\Temp; run `dredge scan C:\\Temp` first",
              "hint": "dredge scan C:\\Temp" } }
@@ -284,7 +375,7 @@ parser (no JSON document; clap's message goes to stderr).
 ## `dredge schema`
 
 Prints one JSON Schema document describing the envelope and every record/summary type
-above (`schema_version` 1). No snapshot needed. MCP does not expose it; the tool
+above (`schema_version` 3). No snapshot needed. MCP does not expose it; the tool
 descriptions carry what an agent needs.
 
 ## MCP tool inputs
@@ -297,6 +388,9 @@ descriptions carry what an agent needs.
 | `disk_browse` | `path`, `limit` (default 10) |
 | `disk_largest` | `path`, `ext?`, `min_bytes?`, `limit` (default 10) |
 | `disk_types` | `path`, `limit` (default 10) |
+| `disk_categories` | `path`, `limit` (default 10) |
+| `disk_insights` | `path`, `limit` (default 10) |
+| `disk_doctor` | none |
 | `disk_detail` | `path` |
 
 Each tool returns the corresponding envelope as one compact JSON text block. `verbose`
@@ -309,6 +403,23 @@ prints one `scan` (or `error`) document per line.
 
 ## Stability
 
-`schema_version` 1 promises: existing fields keep their names and meaning; new optional
+`schema_version` 3 promises: existing fields keep their names and meaning; new optional
 fields may appear; consumers must ignore unknown fields. Removing or renaming a field, or
 changing a unit, bumps `schema_version`.
+
+Version 2 added the `categories` and `insights` kinds and the `category` row field. Nothing
+from version 1 was removed or renamed; the bump marks the new kinds.
+
+Version 3 added the `doctor` kind (and the `disk_doctor` MCP tool). Nothing from version 2
+was removed or renamed.
+
+
+## Doctor
+
+`dredge doctor` reports read-only environment checks in `records`; it exits successfully even when a check warns. Each record has `check`, `status` (`ok` or `warn`; `fail` is reserved and not emitted yet, so consumers should still tolerate it), `message`, and optional `hint`. Checks include data-directory presence and permission metadata, snapshot count and header validity (each file's own format version is reported, and an unsupported version warns), supported snapshot format, available space on the data-directory volume, configured focus-root existence and snapshot coverage/age, and on macOS a best-effort Full Disk Access hint. The command does not change permissions or write probe files.
+
+```json
+{ "schema_version": 3, "kind": "doctor", "records": [
+  { "check": "data_dir", "status": "ok", "message": "exists; permissions allow writing" }
+], "summary": { "checks": 1, "data_dir": "/path/to/data" } }
+```

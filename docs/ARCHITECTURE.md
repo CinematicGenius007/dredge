@@ -1,8 +1,7 @@
 # dredge architecture (phase 1)
 
-Status: **draft for approval**. No code exists yet. Items marked ⚑ are decisions I'd like
-you to look at; everything else under "Decisions" is a simplest-option call I'll proceed
-with unless you object.
+Status: **approved**. This is the original phase 1 design and still describes the engine;
+later phases are in `ROADMAP.md`. Items marked ⚑ record decisions that were made.
 
 ## 1. Goal and non-goals
 
@@ -19,13 +18,16 @@ module boundaries only. No stubs.
 ```
 dredge-cli ──► dredge-mcp ──► dredge-core ◄── dredge-scan
      │                            ▲               ▲
-     └────────────────────────────┴───────────────┘   (cli also depends on dredge-scan)
+     ├────────────────────────────┴───────────────┘   (cli also depends on dredge-scan)
+     └──► dredge-tui (feature `tui`) ──► dredge-render ──► dredge-core
 ```
 
 | Crate | Owns | Does not own |
 |---|---|---|
 | `dredge-core` | `Index` + `IndexBuilder`, size accounting rules, snapshot IO, `Store` (data dir), `Engine` (query functions), output types (serde + schemars), `Scanner` trait, `volumes()` | any filesystem walking, any `cfg(windows)` code |
 | `dredge-scan` | `WalkScanner`, platform directory enumeration (`cfg` modules + portable fallback) | queries, JSON, snapshots |
+| `dredge-render` | pure bar/legend/report rendering (Bayer dithering, color tiers, plain fallback) from `Segment`s to strings | I/O, terminal detection, queries |
+| `dredge-tui` | `dredge tui`: pure state machine (`update(state, event) -> (state, effects)`), ratatui drawing, and a thin runner that calls `Engine`, restores the terminal on every exit path and copies text via OSC 52 | queries, any execution of suggested commands, any deletion |
 | `dredge-cli` | binary `dredge`: clap parsing, printing one JSON doc, exit codes, `dredge mcp` entry | any query logic |
 | `dredge-mcp` | rmcp stdio server, job manager, idle-unload cache, tool descriptions | any query logic |
 
@@ -82,6 +84,14 @@ Paths are never stored. They are rebuilt by walking `parent` and joining names w
 platform separator. Path → node resolution walks components from the root, matching
 siblings by name: exact match first, then case-folded fallback on Windows/macOS
 (case-insensitive filesystems); Linux is exact only.
+
+**Categories** (`categories.rs`) add one byte per node, computed by one linear pass over the
+pre-order index and cached with the loaded index. The pass keeps a stack of the directories
+above the current node, so rules match path components without rebuilding paths; a directory
+matched by a rule claims its subtree, which the pass fills and skips. As each directory's
+subtree ends, its children's categories fold into it, so a directory knows whether everything
+in it is one category. `categories` then walks a scope once, counting each single-category
+subtree whole.
 
 ## 4. Size accounting rules
 

@@ -179,6 +179,25 @@ fn open(path: &Path) -> Result<BufReader<File>, Error> {
         .map_err(|e| Error::io(format!("opening snapshot {}", path.display()), e))
 }
 
+/// The format version recorded in a snapshot file, whether or not this build supports it.
+pub fn read_version(path: &Path) -> Result<u32, Error> {
+    let corrupt = |reason: &str| Error::SnapshotCorrupt {
+        path: path.display().to_string(),
+        reason: reason.to_string(),
+    };
+    let mut r = open(path)?;
+    let mut magic = [0u8; 8];
+    r.read_exact(&mut magic)
+        .map_err(|_| corrupt("file too short"))?;
+    if &magic != MAGIC {
+        return Err(corrupt("not a dredge snapshot"));
+    }
+    let mut v = [0u8; 4];
+    r.read_exact(&mut v)
+        .map_err(|_| corrupt("file too short"))?;
+    Ok(u32::from_le_bytes(v))
+}
+
 /// Read only the header; does not touch the compressed body.
 pub fn read_header(path: &Path) -> Result<IndexMeta, Error> {
     read_prelude(&mut open(path)?, path)
@@ -313,6 +332,21 @@ mod tests {
             read(&p),
             Err(Error::SnapshotVersion { found: 99, .. })
         ));
+    }
+
+    #[test]
+    fn read_version_reports_the_files_own_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("v.dredge");
+        write(&p, &build()).unwrap();
+        assert_eq!(read_version(&p).unwrap(), FORMAT_VERSION);
+        let mut v = Vec::new();
+        v.extend_from_slice(MAGIC);
+        v.extend_from_slice(&99u32.to_le_bytes());
+        fs::write(&p, v).unwrap();
+        assert_eq!(read_version(&p).unwrap(), 99);
+        fs::write(&p, b"junk").unwrap();
+        assert!(read_version(&p).is_err());
     }
 
     #[test]

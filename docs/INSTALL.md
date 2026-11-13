@@ -144,3 +144,44 @@ cargo clean
 
 Snapshots live in `%LOCALAPPDATA%\dredge` (or `DREDGE_DATA_DIR` if set). Delete the `.dredge`
 files there to force a fresh scan; dredge never deletes them itself.
+
+## Prebuilt release binaries
+
+Tagged releases will attach archives for Windows x64, macOS Apple Silicon, macOS Intel, and Linux x64 to the GitHub Releases page. Download the archive for your platform and `SHA256SUMS`, then verify before extracting:
+
+```powershell
+# Windows PowerShell: compare this output with the matching line in SHA256SUMS
+(Get-FileHash .\dredge-vX.Y.Z-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash.ToLower()
+```
+
+```bash
+# macOS / Linux
+shasum -a 256 -c SHA256SUMS
+# Then extract the matching archive, for example:
+tar -xzf dredge-vX.Y.Z-aarch64-apple-darwin.tar.gz
+```
+
+Replace `X.Y.Z` with the release version. The checksum file is published alongside the archives. Releases are not yet available; until a tagged release exists, install from source with `cargo install --path crates/dredge-cli`.
+
+## Shell completions
+
+Print a completion script with `dredge completions <shell>` (bash, zsh, fish, powershell, or elvish). Install it using your shell's standard completion directory:
+
+```bash
+# bash (current user)
+dredge completions bash > ~/.local/share/bash-completion/completions/dredge
+# zsh (ensure this directory is on $fpath)
+dredge completions zsh > ~/.zfunc/_dredge
+# fish
+dredge completions fish > ~/.config/fish/completions/dredge.fish
+# PowerShell: add the output to a profile script
+dredge completions powershell >> $PROFILE
+# elvish
+dredge completions elvish > ~/.config/elvish/lib/dredge.elv
+```
+
+## Package managers (planned)
+
+Homebrew, Scoop, and winget packages are **planned, not available yet**. The files in
+[`docs/packaging/`](packaging/) are clearly marked templates with placeholder URLs and hashes;
+nothing is published through these package managers.

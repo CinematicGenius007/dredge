@@ -3,6 +3,7 @@
 //! and no platform-specific code lives here.
 
 pub mod builder;
+pub mod categories;
 pub mod engine;
 pub mod error;
 pub mod model;

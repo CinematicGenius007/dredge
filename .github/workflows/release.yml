@@ -1,0 +1,94 @@
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+            binary: dredge.exe
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: tar.gz
+            binary: dredge
+          - target: x86_64-apple-darwin
+            # Intel macOS runners are retired; cross-compile from the Apple Silicon runner.
+            os: macos-14
+            archive: tar.gz
+            binary: dredge
+          - target: x86_64-unknown-linux-gnu
+            # Oldest hosted Ubuntu image, so the binary's glibc floor is as low as practical.
+            os: ubuntu-22.04
+            archive: tar.gz
+            binary: dredge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify tag matches dredge-cli version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          # `cargo pkgid` ends in `#dredge-cli@X.Y.Z` (newer cargo) or `#X.Y.Z` (older); no extra tools needed.
+          PKGID="$(cargo pkgid -p dredge-cli --locked)"
+          PACKAGE_VERSION="${PKGID##*[#@]}"
+          test "$TAG_VERSION" = "$PACKAGE_VERSION" || { echo "tag v$TAG_VERSION does not match dredge-cli $PACKAGE_VERSION" >&2; exit 1; }
+      - run: cargo build --release -p dredge-cli --locked --target ${{ matrix.target }}
+      - name: Package Windows archive
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $stage = "stage"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" $stage
+          Copy-Item LICENSE, README.md $stage
+          Compress-Archive -Path "$stage/*" -DestinationPath "dredge-${{ github.ref_name }}-${{ matrix.target }}.zip"
+      - name: Package Unix archive
+        if: matrix.archive == 'tar.gz'
+        run: |
+          mkdir stage
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} stage/
+          cp LICENSE README.md stage/
+          tar -czf dredge-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz -C stage .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dredge-*.zip
+            dredge-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: sha256sum dredge-*.zip dredge-*.tar.gz > SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --title "$TAG" --generate-notes
