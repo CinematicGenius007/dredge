@@ -30,4 +30,4 @@ Changes that do not touch these need no RFC. A bug fix does not need one.
 - **Alternatives**: what else was considered, and why it was not chosen.
 - **Test plan**: which fixtures and parity tests prove it.
 
-No RFCs have been written yet.
+- [0001](0001-lazy-storage-and-honest-freshness.md): lazy snapshot storage, reuse of recent scans, honest freshness (Draft)
