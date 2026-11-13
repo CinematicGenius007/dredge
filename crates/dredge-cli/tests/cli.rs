@@ -382,7 +382,7 @@ fn categories_reconcile_and_insights_are_text_only() {
     assert_eq!(sum, total);
     let dev = rows.iter().find(|r| r["category"] == "developer").unwrap();
     assert_eq!(dev["files"], 1);
-    assert_eq!(dev["top"][0], sub(&f.root(), "proj/node_modules"));
+    assert_eq!(dev["top"][0], sub(&sub(&f.root(), "proj"), "node_modules"));
     let photos = rows.iter().find(|r| r["category"] == "photos").unwrap();
     assert_eq!(photos["top"][0], sub(&f.root(), "pics"));
 
