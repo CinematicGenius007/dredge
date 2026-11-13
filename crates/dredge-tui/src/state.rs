@@ -1526,10 +1526,16 @@ mod tests {
             s = browsed(s, dir(p, &[next]));
             let _ = name;
         }
-        assert_eq!(
-            crumbs("/data", "/data/a/b/c"),
-            ["/data", "/data/a", "/data/a/b", "/data/a/b/c"]
-        );
+        // Compared as paths: crumbs are joined with the platform separator.
+        let got: Vec<PathBuf> = crumbs("/data", "/data/a/b/c")
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        let want: Vec<PathBuf> = ["/data", "/data/a", "/data/a/b", "/data/a/b/c"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        assert_eq!(got, want);
         let s = press(s, Key::Char('g')).0;
         assert_eq!(s.input, Some(Input::Jump));
         // Level 2 is on the stack: restored with no load.
