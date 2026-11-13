@@ -1,4 +1,4 @@
-# dredge output schema (version 3)
+# dredge output schema (version 4)
 
 Status: **approved**. `dredge schema` prints the machine-readable JSON Schema,
 generated from the same Rust types the commands return. This file is the human guide.
@@ -31,7 +31,7 @@ generated from the same Rust types the commands return. This file is the human g
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "kind": "browse",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [ ... ],
@@ -110,7 +110,7 @@ not scanned. This is how an agent learns, in one call, what is indexed and how s
 
 ```json
 {
-  "schema_version": 3, "kind": "scan",
+  "schema_version": 4, "kind": "scan",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 0 },
   "records": [],
   "summary": {
@@ -134,6 +134,10 @@ not scanned. This is how an agent learns, in one call, what is indexed and how s
 and `files_per_sec` is `files` over that time, so both match what the caller waited. The walk
 alone is faster; `bench_scan` measures that.
 
+`evicted` appears only when `DREDGE_MAX_DATA` is set and this scan pushed the data directory over
+it: the roots whose snapshots were removed to fit (unused snapshots first, then the oldest; never
+the one just written), or the file path for an unreadable snapshot.
+
 `errors.samples` holds at most 20 paths. `volume_used_bytes` and `unaccounted_bytes` appear
 only when the root is a volume root: `unaccounted_bytes` is volume used space the scan
 could not attribute (filesystem metadata, shadow copies, unreadable folders).
@@ -145,10 +149,62 @@ could not attribute (filesystem metadata, shadow copies, unreadable folders).
 ```json
 { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231,
   "nodes": 1302541, "allocated_bytes": 183420186624, "human": "170.8 GiB",
-  "file_bytes": 61203388, "volume_id": "A4F2-91C0", "format_version": 1 }
+  "file_bytes": 61203388, "volume_id": "A4F2-91C0", "format_version": 1,
+  "root_exists": true }
 ```
 
-`summary`: `{ "snapshots": 1, "data_dir": "C:\\Users\\me\\AppData\\Local\\dredge" }`
+| Record field | Meaning |
+|---|---|
+| `file_bytes` | Size of the snapshot file itself. |
+| `root_exists` | `false` when the root path is gone. One `stat` that follows no link and hydrates nothing; an error other than "not found" counts as present. |
+| `shadowed_by` | Present when a newer snapshot covers this one's whole root. Queries always use the newest covering snapshot, so this one is never read; `dredge forget --prune` removes it. |
+
+`summary`:
+
+```json
+{ "snapshots": 4, "data_dir": "C:\\Users\\me\\AppData\\Local\\dredge",
+  "file_bytes": 74120331, "human": "70.7 MiB",
+  "prunable": 1, "prunable_bytes": 812340, "temp_files": 0, "temp_bytes": 0 }
+```
+
+`file_bytes` counts every dredge file in the data directory: readable snapshots, unreadable ones
+and stale temp files. `prunable` and `prunable_bytes` are what `dredge forget --prune` would
+remove now; `temp_files` and `temp_bytes` are temp files older than an hour left by snapshot
+writes that never finished (they are also counted in `prunable`).
+
+## `kind: "forget"`
+
+`dredge forget <root>...`, `dredge forget --prune` or `dredge forget --all`, each with optional
+`--dry-run`. CLI only: the MCP server has no delete tool. No `snapshot` object. One record per
+file removed (or, with `--dry-run`, that would be removed):
+
+```json
+{
+  "schema_version": 4, "kind": "forget",
+  "records": [
+    { "root": "/Users/me/code/app", "file": "/Users/me/Library/Application Support/dredge/Users-me-code-app-5be1c0f2a9d3e711.dredge",
+      "file_bytes": 812340, "reason": "shadowed", "shadowed_by": "/Users/me", "removed": true }
+  ],
+  "summary": { "removed": 1, "freed_bytes": 812340, "human": "793.3 KiB", "dry_run": false,
+               "remaining": 3, "data_dir": "/Users/me/Library/Application Support/dredge" }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `root` | The snapshot's root; absent when the file's header cannot be read. |
+| `reason` | `requested` (named root), `all`, `shadowed`, `root_missing` (the root is gone and its parent folder still exists; a snapshot of a whole volume or of a drive that is not plugged in is never pruned for this), `unsupported_format`, `corrupt`, `temp_file`. |
+| `shadowed_by` | For `shadowed` (and for `all` when it applies): the covering root. |
+| `removed` | `false` on a dry run or when removal failed; then `error` says why. |
+| `summary.removed`, `freed_bytes` | Files removed and their bytes (on a dry run, what would be). |
+| `summary.remaining` | Readable snapshots left. |
+
+A named root must be the exact root of a snapshot. If any named root has none, the command fails
+with `invalid_argument` (naming the covering snapshot when one exists) and removes nothing.
+
+A file is removed only when it is a regular file directly in the data directory (links are never
+followed or removed) and either carries the dredge snapshot magic in its first 8 bytes or is named
+`*.dredge.<digits>.tmp` and was last modified over an hour ago. Nothing else is ever removed.
 
 ## `kind: "browse"`
 
@@ -156,7 +212,7 @@ could not attribute (filesystem metadata, shadow copies, unreadable folders).
 
 ```json
 {
-  "schema_version": 3, "kind": "browse",
+  "schema_version": 4, "kind": "browse",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "name": "AppData", "path": "C:\\Users\\me\\AppData", "kind": "dir",
@@ -183,7 +239,7 @@ directories), anywhere under `path`. `--ext` is case-insensitive, with or withou
 
 ```json
 {
-  "schema_version": 3, "kind": "largest",
+  "schema_version": 4, "kind": "largest",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "name": "ubuntu.vhdx", "path": "C:\\Users\\me\\AppData\\Local\\wsl\\ubuntu.vhdx",
@@ -208,7 +264,7 @@ not just those shown.
 
 ```json
 {
-  "schema_version": 3, "kind": "types",
+  "schema_version": 4, "kind": "types",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "ext": "vhdx", "files": 3, "allocated_bytes": 26843545600, "human": "25.0 GiB",
@@ -227,7 +283,7 @@ largest first. Categories: `apps`, `developer`, `photos`, `movies`, `music`, `do
 
 ```json
 {
-  "schema_version": 3, "kind": "categories",
+  "schema_version": 4, "kind": "categories",
   "snapshot": { "root": "/Users/me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "category": "developer", "allocated_bytes": 21474836480, "human": "20.0 GiB",
@@ -266,7 +322,7 @@ and never deletes or moves anything.**
 
 ```json
 {
-  "schema_version": 3, "kind": "insights",
+  "schema_version": 4, "kind": "insights",
   "snapshot": { "root": "/Users/me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "id": "xcode_derived_data", "category": "developer",
@@ -281,7 +337,7 @@ and never deletes or moves anything.**
 
 | Record field | Meaning |
 |---|---|
-| `id` | Stable hint id: `node_modules`, `npm_cache`, `cargo_registry`, `gradle_caches`, `xcode_derived_data`, `user_caches`, `trash`. |
+| `id` | Stable hint id: `node_modules`, `npm_cache`, `cargo_registry`, `gradle_caches`, `xcode_derived_data`, `user_caches`, `trash`, `dredge_snapshots`. |
 | `category` | The path's category. |
 | `path`, `allocated_bytes`, `human` | The directory and its allocated size. Less may be freed when files in it are hard-linked elsewhere (the `message` says so). |
 | `message` | What the directory is and what re-creates it. |
@@ -302,13 +358,17 @@ Rules for a hint (all must hold):
   (on Windows also a symlink), and no component of its path was stored lossily.
 - Nothing nested inside a hinted directory gets a second hint.
 
+`dredge_snapshots` labels dredge's own data directory when it lies inside the queried path and
+holds at least 100 MiB. Its `suggested_command` is always `dredge forget --prune`, never a delete
+command, and nothing inside it gets another hint.
+
 ## `kind: "detail"`
 
 `dredge detail <path>`: one item. Exactly one record. All extras that apply are included.
 
 ```json
 {
-  "schema_version": 3, "kind": "detail",
+  "schema_version": 4, "kind": "detail",
   "snapshot": { "root": "C:\\Users\\me", "taken_at": "2026-10-27T09:14:02Z", "age_secs": 5231 },
   "records": [
     { "name": "node_modules", "path": "C:\\Users\\me\\proj\\node_modules", "kind": "dir",
@@ -329,7 +389,7 @@ For a hard-linked file, the record has `hard_links` and, on an alias, flag
 `disk_scan` returns immediately:
 
 ```json
-{ "schema_version": 3, "kind": "job", "records": [],
+{ "schema_version": 4, "kind": "job", "records": [],
   "summary": { "job_id": "scan-1", "state": "running", "roots": ["C:\\work", "C:\\"],
                "elapsed_ms": 3 } }
 ```
@@ -349,7 +409,7 @@ returns that job (check `roots`) instead of starting another.
 ## `kind: "error"`
 
 ```json
-{ "schema_version": 3, "kind": "error",
+{ "schema_version": 4, "kind": "error",
   "error": { "code": "no_snapshot",
              "message": "no snapshot covers C:\\Temp; run `dredge scan C:\\Temp` first",
              "hint": "dredge scan C:\\Temp" } }
@@ -375,7 +435,7 @@ parser (no JSON document; clap's message goes to stderr).
 ## `dredge schema`
 
 Prints one JSON Schema document describing the envelope and every record/summary type
-above (`schema_version` 3). No snapshot needed. MCP does not expose it; the tool
+above (`schema_version` 4). No snapshot needed. MCP does not expose it; the tool
 descriptions carry what an agent needs.
 
 ## MCP tool inputs
@@ -403,7 +463,7 @@ prints one `scan` (or `error`) document per line.
 
 ## Stability
 
-`schema_version` 3 promises: existing fields keep their names and meaning; new optional
+`schema_version` 4 promises: existing fields keep their names and meaning; new optional
 fields may appear; consumers must ignore unknown fields. Removing or renaming a field, or
 changing a unit, bumps `schema_version`.
 
@@ -413,13 +473,18 @@ from version 1 was removed or renamed; the bump marks the new kinds.
 Version 3 added the `doctor` kind (and the `disk_doctor` MCP tool). Nothing from version 2
 was removed or renamed.
 
+Version 4 added the `forget` kind (RFC 0002), the `snapshots` fields `root_exists`,
+`shadowed_by` and the summary totals, `scan.summary.evicted`, the `dredge_snapshots` insight and
+the `snapshot_storage`, `prunable` and `temp_files` doctor checks. Nothing from version 3 was
+removed or renamed.
+
 
 ## Doctor
 
-`dredge doctor` reports read-only environment checks in `records`; it exits successfully even when a check warns. Each record has `check`, `status` (`ok` or `warn`; `fail` is reserved and not emitted yet, so consumers should still tolerate it), `message`, and optional `hint`. Checks include data-directory presence and permission metadata, snapshot count and header validity (each file's own format version is reported, and an unsupported version warns), supported snapshot format, available space on the data-directory volume, configured focus-root existence and snapshot coverage/age, and on macOS a best-effort Full Disk Access hint. The command does not change permissions or write probe files.
+`dredge doctor` reports read-only environment checks in `records`; it exits successfully even when a check warns. Each record has `check`, `status` (`ok` or `warn`; `fail` is reserved and not emitted yet, so consumers should still tolerate it), `message`, and optional `hint`. Checks include data-directory presence and permission metadata, snapshot count and header validity (each file's own format version is reported, and an unsupported version warns), supported snapshot format, available space on the data-directory volume, configured focus-root existence and snapshot coverage/age, `snapshot_storage` (count and bytes on disk; warns when `DREDGE_MAX_DATA` is invalid or exceeded), `prunable` (warns when snapshots no query uses exist), `temp_files` (warns on leftover temp files), and on macOS a best-effort Full Disk Access hint. The command does not change permissions or write probe files.
 
 ```json
-{ "schema_version": 3, "kind": "doctor", "records": [
+{ "schema_version": 4, "kind": "doctor", "records": [
   { "check": "data_dir", "status": "ok", "message": "exists; permissions allow writing" }
 ], "summary": { "checks": 1, "data_dir": "/path/to/data" } }
 ```

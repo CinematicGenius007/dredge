@@ -6,6 +6,10 @@ dredge is read-only by design. That guarantee is the security boundary. Report a
 issue any behaviour that:
 
 - writes, deletes, moves or modifies a file outside the snapshot directory;
+- removes a file in the snapshot directory that is not one of dredge's own (`dredge forget` and
+  `DREDGE_MAX_DATA` follow the rules in `docs/RFCS/0002-snapshot-storage-management.md`);
+- lets an MCP client remove a file, other than the eviction the user opted into with
+  `DREDGE_MAX_DATA` after a `disk_scan`;
 - follows a symlink or junction, or downloads or reads the content of a cloud placeholder;
 - opens a network connection, or sends telemetry;
 - runs a command that dredge only suggested in text;

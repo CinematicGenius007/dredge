@@ -22,6 +22,33 @@ pub fn human_bytes(n: u64) -> String {
     format!("{v:.1} {}", UNITS[u])
 }
 
+/// A size such as `500M`, `2G`, `1.5GiB` or `1073741824`. `K`, `M`, `G`, `T` and the `KiB`
+/// to `TiB` spellings are binary (1024); case and a trailing `B` do not matter.
+pub fn parse_size(s: &str) -> Option<u64> {
+    let t = s.trim().to_ascii_lowercase();
+    let t = t
+        .strip_suffix("ib")
+        .or_else(|| t.strip_suffix('b'))
+        .unwrap_or(&t);
+    let (num, shift) = match t.chars().last()? {
+        'k' => (&t[..t.len() - 1], 10),
+        'm' => (&t[..t.len() - 1], 20),
+        'g' => (&t[..t.len() - 1], 30),
+        't' => (&t[..t.len() - 1], 40),
+        _ => (t, 0),
+    };
+    let num = num.trim();
+    if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return None;
+    }
+    if shift == 0 {
+        return num.parse().ok();
+    }
+    let v: f64 = num.parse().ok()?;
+    let bytes = v * (1u64 << shift) as f64;
+    (bytes.is_finite() && bytes < u64::MAX as f64).then_some(bytes as u64)
+}
+
 /// Percentage rounded to one decimal; 0.0 when `total` is zero.
 pub fn pct(part: u64, total: u64) -> f64 {
     if total == 0 {
@@ -173,6 +200,20 @@ pub fn current_dir_string() -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn sizes_parse_in_binary_units() {
+        assert_eq!(parse_size("1073741824"), Some(1 << 30));
+        assert_eq!(parse_size("500M"), Some(500 << 20));
+        assert_eq!(parse_size("2g"), Some(2 << 30));
+        assert_eq!(parse_size("1.5GiB"), Some(3 << 29));
+        assert_eq!(parse_size(" 10 KB "), Some(10 << 10));
+        assert_eq!(parse_size("1T"), Some(1 << 40));
+        for bad in ["", "G", "-1G", "1X", "1.2.3M", "lots", "1e3"] {
+            assert_eq!(parse_size(bad), None, "{bad}");
+        }
+    }
+
     use super::*;
 
     #[test]

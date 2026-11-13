@@ -61,6 +61,7 @@ impl Fixture {
             .args(args)
             .env("DREDGE_DATA_DIR", &self.data)
             .env_remove("DREDGE_FOCUS_ROOTS")
+            .env_remove("DREDGE_MAX_DATA")
             .output()
             .unwrap();
         (String::from_utf8(out.stdout).unwrap(), out.status.success())
@@ -88,7 +89,7 @@ fn scan_then_browse_is_sorted_with_envelope() {
     let s = f.scan();
     // big.bin, big.link, small.txt, empty, ünï.log, file.dat, package-lock.json, index.js, cat.jpg
     assert_eq!(s["summary"]["files"], 9);
-    assert_eq!(s["schema_version"], 3);
+    assert_eq!(s["schema_version"], 4);
 
     let v = f.json(&["browse", &f.root()]);
     assert_eq!(v["kind"], "browse");
@@ -170,8 +171,7 @@ fn cli_output_is_byte_identical_to_the_engine() {
     assert!(ok);
     let engine = Engine::new(EngineConfig {
         data_dir: f.data.clone(),
-        focus_roots: vec![],
-        verbose: false,
+        ..Default::default()
     });
     let direct = engine
         .run(&Query::Browse {
@@ -267,7 +267,7 @@ fn doctor_reports_empty_store_corrupt_snapshot_and_missing_focus_root() {
     assert!(out.status.success());
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["kind"], "doctor");
-    assert_eq!(v["schema_version"], 3);
+    assert_eq!(v["schema_version"], 4);
     let rows = v["records"].as_array().unwrap();
     assert!(rows
         .iter()
@@ -372,7 +372,7 @@ fn categories_reconcile_and_insights_are_text_only() {
 
     let c = f.json(&["categories", &f.root(), "--limit", "100"]);
     assert_eq!(c["kind"], "categories");
-    assert_eq!(c["schema_version"], 3);
+    assert_eq!(c["schema_version"], 4);
     assert_eq!(c["summary"]["allocated_bytes"], total);
     let rows = c["records"].as_array().unwrap();
     let sum: u64 = rows
@@ -538,8 +538,7 @@ fn mcp_categories_insights_and_doctor_are_byte_identical_to_the_cli() {
     ];
     let engine = Engine::new(EngineConfig {
         data_dir: f.data.clone(),
-        focus_roots: vec![],
-        verbose: false,
+        ..Default::default()
     });
     let direct = [
         engine.run(&Query::Categories {
@@ -667,4 +666,111 @@ fn tui_refuses_without_a_terminal() {
         "{err}"
     );
     assert!(!f.data.exists(), "tui must not scan or write on its own");
+}
+
+#[test]
+fn forget_removes_only_dredge_files_and_reports_totals() {
+    let f = Fixture::new();
+    f.scan();
+    let nested = sub(&f.root(), "a");
+    assert_eq!(f.json(&["scan", &nested])["kind"], "scan");
+    // Rescan the parent so the nested snapshot is older and covered: shadowed.
+    std::thread::sleep(Duration::from_millis(1100));
+    f.scan();
+
+    let s = f.json(&["snapshots"]);
+    assert_eq!(s["summary"]["snapshots"], 2);
+    assert_eq!(s["summary"]["prunable"], 1);
+    let total: u64 = s["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["file_bytes"].as_u64().unwrap())
+        .sum();
+    assert_eq!(s["summary"]["file_bytes"], total);
+    let shadowed = s["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["shadowed_by"].is_string())
+        .unwrap();
+    assert_eq!(shadowed["shadowed_by"], f.root());
+    assert_eq!(shadowed["root_exists"], true);
+
+    // A file without the snapshot magic, a foreign file and a symlink are never removed.
+    fs::write(f.data.join("impostor.dredge"), b"not a snapshot").unwrap();
+    fs::write(f.data.join("notes.txt"), b"mine").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(f.tree.join("a/big.bin"), f.data.join("link.dredge")).unwrap();
+
+    let dry = f.json(&["forget", "--prune", "--dry-run"]);
+    assert_eq!(dry["kind"], "forget");
+    assert_eq!(dry["summary"]["dry_run"], true);
+    assert_eq!(dry["summary"]["removed"], 1);
+    assert_eq!(dry["records"][0]["reason"], "shadowed");
+    assert_eq!(dry["records"][0]["removed"], false);
+    assert_eq!(f.json(&["snapshots"])["summary"]["snapshots"], 2);
+
+    let pruned = f.json(&["forget", "--prune"]);
+    assert_eq!(pruned["summary"]["removed"], 1);
+    assert_eq!(pruned["summary"]["remaining"], 1);
+    assert_eq!(pruned["records"][0]["root"], nested);
+    assert!(pruned["summary"]["freed_bytes"].as_u64().unwrap() > 0);
+
+    // An unknown root fails and removes nothing, even next to a valid one.
+    let (text, ok) = f.run(&["forget", &f.root(), &sub(&f.root(), "b")]);
+    assert!(!ok);
+    let v: Value = serde_json::from_str(text.trim()).unwrap();
+    assert_eq!(v["error"]["code"], "invalid_argument");
+    assert_eq!(f.json(&["snapshots"])["summary"]["snapshots"], 1);
+
+    let all = f.json(&["forget", "--all"]);
+    assert_eq!(all["summary"]["removed"], 1);
+    assert_eq!(all["summary"]["remaining"], 0);
+    assert!(f.data.join("impostor.dredge").exists());
+    assert!(f.data.join("notes.txt").exists());
+    #[cfg(unix)]
+    assert!(f.data.join("link.dredge").symlink_metadata().is_ok());
+    assert!(f.tree.join("a/big.bin").exists());
+}
+
+#[test]
+fn max_data_cap_evicts_older_snapshots_but_keeps_the_new_one() {
+    let f = Fixture::new();
+    assert_eq!(f.json(&["scan", &sub(&f.root(), "a")])["kind"], "scan");
+    std::thread::sleep(Duration::from_millis(1100));
+    let run = |cap: &str, path: &str| -> Value {
+        let out = Command::new(env!("CARGO_BIN_EXE_dredge"))
+            .args(["scan", path])
+            .env("DREDGE_DATA_DIR", &f.data)
+            .env("DREDGE_MAX_DATA", cap)
+            .env_remove("DREDGE_FOCUS_ROOTS")
+            .output()
+            .unwrap();
+        serde_json::from_str(String::from_utf8(out.stdout).unwrap().trim()).unwrap()
+    };
+    let bad = run("lots", &sub(&f.root(), "b"));
+    assert_eq!(bad["error"]["code"], "invalid_argument");
+    assert_eq!(f.json(&["snapshots"])["summary"]["snapshots"], 1);
+
+    let s = run("1", &sub(&f.root(), "b"));
+    assert_eq!(s["kind"], "scan", "{s}");
+    assert_eq!(
+        s["summary"]["evicted"],
+        serde_json::json!([sub(&f.root(), "a")])
+    );
+    let snaps = f.json(&["snapshots"]);
+    assert_eq!(snaps["summary"]["snapshots"], 1);
+    assert_eq!(snaps["records"][0]["root"], sub(&f.root(), "b"));
+
+    let s = run("10G", &f.root());
+    assert!(s["summary"].get("evicted").is_none(), "{s}");
+}
+
+#[test]
+fn schema_lists_forget() {
+    let f = Fixture::new();
+    let (text, ok) = f.run(&["schema"]);
+    assert!(ok);
+    assert!(text.contains("ForgetRecord") && text.contains("shadowed_by"));
 }

@@ -10,25 +10,30 @@ use crate::error::Error;
 use crate::model::{Index, IndexMeta};
 use crate::output::{
     CategoriesOut, DoctorOut, DoctorRecord, DoctorSummary, Envelope, ErrorCounts, FocusRoot,
-    InsightsOut, Output, ScanOut, ScanSummary, SnapshotRecord, SnapshotRef, SnapshotsOut,
-    SnapshotsSummary, VolumeRecord, VolumesOut, VolumesSummary,
+    ForgetOut, ForgetRecord, ForgetSummary, InsightsOut, Output, ScanOut, ScanSummary,
+    SnapshotRecord, SnapshotRef, SnapshotsOut, SnapshotsSummary, VolumeRecord, VolumesOut,
+    VolumesSummary,
 };
 use crate::query::{self, DEFAULT_LIMIT, MAX_LIMIT};
 use crate::scanner::{ScanOptions, ScanProgress, Scanner};
 use crate::snapshot::FORMAT_VERSION;
-use crate::store::Store;
+use crate::store::{self, Dead, DeadFile, SnapshotFile, Store};
 use crate::util::{
-    absolutize, covers, current_dir_string, human_bytes, now_secs, pct, rfc3339, same_path,
+    absolutize, covers, current_dir_string, human_bytes, now_secs, parse_size, pct, rfc3339,
+    same_path,
 };
 use crate::volumes;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct EngineConfig {
     pub data_dir: PathBuf,
     /// Roots agents mostly work in; surfaced by `volumes` so they can see what is scanned.
     pub focus_roots: Vec<String>,
     /// Add every extra row field (CLI `--verbose`).
     pub verbose: bool,
+    /// `DREDGE_MAX_DATA` as given: a size cap for the data directory, checked after each
+    /// scan. `None` means no cap. Parsed (and rejected when invalid) by `scan` and `doctor`.
+    pub max_data: Option<String>,
 }
 
 impl EngineConfig {
@@ -52,6 +57,9 @@ impl EngineConfig {
             data_dir: data_dir.unwrap_or_else(Store::default_dir),
             focus_roots,
             verbose,
+            max_data: std::env::var("DREDGE_MAX_DATA")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
         }
     }
 }
@@ -88,6 +96,16 @@ pub enum Query {
     },
 }
 
+/// Which of dredge's own files `Engine::forget` removes.
+pub enum Forget {
+    /// The snapshot rooted at each path (exactly that root, not nested ones).
+    Roots(Vec<String>),
+    /// Shadowed, root-missing and unreadable snapshots, and stale temp files.
+    Prune,
+    /// Every snapshot and stale temp file.
+    All,
+}
+
 struct Cached {
     file: PathBuf,
     taken_at: i64,
@@ -101,8 +119,16 @@ pub struct Engine {
     store: Store,
     focus_roots: Vec<String>,
     verbose: bool,
+    max_data: Option<String>,
     /// At most one loaded index; evicted on a different snapshot or after idling.
     cache: Mutex<Option<Cached>>,
+}
+
+struct Usage {
+    total_bytes: u64,
+    temps: usize,
+    temp_bytes: u64,
+    dead: Vec<DeadFile>,
 }
 
 fn age_secs(taken_at: i64) -> u64 {
@@ -144,6 +170,7 @@ impl Engine {
             store: Store::new(cfg.data_dir),
             focus_roots: cfg.focus_roots,
             verbose: cfg.verbose,
+            max_data: cfg.max_data,
             cache: Mutex::new(None),
         }
     }
@@ -265,7 +292,10 @@ impl Engine {
         let (idx, abs, sref) = self.open(path)?;
         let node = query::resolve(&idx, &abs)?;
         let classes = self.classes(&idx);
-        let (recs, sum) = categories::insights(&idx, &classes, node, limit, categories::host_os());
+        let own = absolutize(&self.store.dir().to_string_lossy(), &current_dir_string());
+        let own_data = idx.resolve(&own);
+        let (recs, sum) =
+            categories::insights(&idx, &classes, node, limit, categories::host_os(), own_data);
         Ok(Envelope::new("insights", Some(sref), recs, sum))
     }
 
@@ -327,6 +357,7 @@ impl Engine {
         progress: &ScanProgress,
     ) -> Result<ScanOut, Error> {
         require_path(path)?;
+        let cap = self.max_data_cap()?;
         // Wall clock for the whole operation (walk, index build, snapshot write), so the
         // reported time and files/sec match what the caller actually waited.
         let started = Instant::now();
@@ -341,13 +372,11 @@ impl Engine {
             index.meta.volume_used_bytes = Some(v.total.saturating_sub(v.free));
         }
         let (snapshot_path, snapshot_bytes) = self.store.save(&index)?;
-        {
-            // A rescan within the same second would otherwise look identical to the cached one.
-            let mut c = self.cache();
-            if c.as_ref().is_some_and(|e| e.file == snapshot_path) {
-                *c = None;
-            }
-        }
+        // A rescan within the same second would otherwise look identical to the cached one.
+        self.drop_cached(&snapshot_path);
+        let evicted = cap
+            .map(|cap| self.evict_to(cap, &snapshot_path))
+            .unwrap_or_default();
         let m = &index.meta;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let secs = (elapsed_ms as f64 / 1000.0).max(0.001);
@@ -371,6 +400,7 @@ impl Engine {
             unaccounted_bytes: m
                 .volume_used_bytes
                 .map(|u| u.saturating_sub(m.allocated_total)),
+            evicted,
         };
         Ok(Envelope::new(
             "scan",
@@ -431,11 +461,13 @@ impl Engine {
     }
 
     fn snapshots_out(&self) -> SnapshotsOut {
-        let records: Vec<SnapshotRecord> = self
-            .store
-            .list()
+        let list = self.store.list();
+        let usage = self.usage(&list);
+        let shadow = store::shadowed_by(&list);
+        let records: Vec<SnapshotRecord> = list
             .into_iter()
-            .map(|s| SnapshotRecord {
+            .zip(shadow)
+            .map(|(s, shadowed_by)| SnapshotRecord {
                 human: human_bytes(s.meta.allocated_total),
                 age_secs: age_secs(s.meta.taken_at),
                 taken_at: rfc3339(s.meta.taken_at),
@@ -444,14 +476,202 @@ impl Engine {
                 file_bytes: s.file_bytes,
                 volume_id: s.meta.volume_id,
                 format_version: FORMAT_VERSION,
+                root_exists: store::root_exists(&s.meta.root),
+                shadowed_by,
                 root: s.meta.root,
             })
             .collect();
         let summary = SnapshotsSummary {
             snapshots: records.len(),
             data_dir: self.store.dir().display().to_string(),
+            file_bytes: usage.total_bytes,
+            human: human_bytes(usage.total_bytes),
+            prunable: usage.dead.len(),
+            prunable_bytes: usage.dead.iter().map(|d| d.file_bytes).sum(),
+            temp_files: usage.temps,
+            temp_bytes: usage.temp_bytes,
         };
         Envelope::new("snapshots", None, records, summary)
+    }
+
+    /// Bytes of every dredge file in the data directory, and what `--prune` would remove.
+    fn usage(&self, list: &[SnapshotFile]) -> Usage {
+        let dead = self.store.dead(list);
+        let others: u64 = dead
+            .iter()
+            .filter(|d| d.root.is_none())
+            .map(|d| d.file_bytes)
+            .sum();
+        let temps = dead.iter().filter(|d| d.why == Dead::TempFile);
+        Usage {
+            total_bytes: list.iter().map(|s| s.file_bytes).sum::<u64>() + others,
+            temps: temps.clone().count(),
+            temp_bytes: temps.map(|d| d.file_bytes).sum(),
+            dead,
+        }
+    }
+
+    /// `DREDGE_MAX_DATA` in bytes; an invalid value is an error so a typo never means "no cap".
+    fn max_data_cap(&self) -> Result<Option<u64>, Error> {
+        self.max_data
+            .as_deref()
+            .map(|v| {
+                parse_size(v).ok_or_else(|| {
+                    Error::InvalidArgument(format!(
+                        "DREDGE_MAX_DATA={v:?} is not a size; use bytes or a number with K, M, G or T, e.g. 2G"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
+    fn drop_cached(&self, file: &Path) {
+        let mut c = self.cache();
+        if c.as_ref().is_some_and(|e| e.file == file) {
+            *c = None;
+        }
+    }
+
+    /// Remove dredge files until the data directory fits in `cap`: dead files first, then the
+    /// oldest snapshots. `keep` (the snapshot just written) is never removed. Returns the roots
+    /// removed, or the file path for a file without a readable root.
+    fn evict_to(&self, cap: u64, keep: &Path) -> Vec<String> {
+        let list = self.store.list();
+        let usage = self.usage(&list);
+        let mut total = usage.total_bytes;
+        let mut order: Vec<(PathBuf, Option<String>, u64)> = usage
+            .dead
+            .into_iter()
+            .map(|d| (d.path, d.root, d.file_bytes))
+            .collect();
+        for s in list.iter().rev() {
+            if !order.iter().any(|(p, ..)| *p == s.path) {
+                order.push((s.path.clone(), Some(s.meta.root.clone()), s.file_bytes));
+            }
+        }
+        let mut evicted = Vec::new();
+        for (path, root, bytes) in order {
+            if total <= cap {
+                break;
+            }
+            if path == keep || self.store.remove(&path).is_err() {
+                continue;
+            }
+            self.drop_cached(&path);
+            total = total.saturating_sub(bytes);
+            evicted.push(root.unwrap_or_else(|| path.display().to_string()));
+        }
+        evicted
+    }
+
+    /// Remove dredge's own snapshot files (`dredge forget`). Nothing outside the data
+    /// directory is touched, and nothing is removed on a dry run. A root with no snapshot
+    /// fails the whole call before anything is removed.
+    pub fn forget(&self, what: &Forget, dry_run: bool) -> Result<ForgetOut, Error> {
+        let list = self.store.list();
+        let shadow = store::shadowed_by(&list);
+        let readable = |s: &SnapshotFile, reason: &'static str, by: Option<String>| ForgetRecord {
+            root: Some(s.meta.root.clone()),
+            file: s.path.display().to_string(),
+            file_bytes: s.file_bytes,
+            reason,
+            shadowed_by: by,
+            removed: false,
+            error: None,
+        };
+        let from_dead = |d: DeadFile| ForgetRecord {
+            root: d.root,
+            file: d.path.display().to_string(),
+            file_bytes: d.file_bytes,
+            reason: d.why.reason(),
+            shadowed_by: match d.why {
+                Dead::Shadowed { by } => Some(by),
+                _ => None,
+            },
+            removed: false,
+            error: None,
+        };
+        let mut plan: Vec<(PathBuf, ForgetRecord)> = Vec::new();
+        match what {
+            Forget::Roots(roots) => {
+                if roots.is_empty() {
+                    return Err(Error::InvalidArgument(
+                        "give a snapshot root, --prune or --all".into(),
+                    ));
+                }
+                let cwd = current_dir_string();
+                for r in roots {
+                    require_path(r)?;
+                    let abs = absolutize(r, &cwd);
+                    let Some(s) = list
+                        .iter()
+                        .find(|s| same_path(&s.meta.root, &abs, s.meta.case_insensitive))
+                    else {
+                        let near = list
+                            .iter()
+                            .find(|s| covers(&s.meta.root, &abs, s.meta.case_insensitive))
+                            .map(|s| format!(" (it is inside the snapshot of {})", s.meta.root))
+                            .unwrap_or_default();
+                        return Err(Error::InvalidArgument(format!(
+                            "no snapshot is rooted at {abs}{near}; `dredge snapshots` lists the roots"
+                        )));
+                    };
+                    if !plan.iter().any(|(p, _)| *p == s.path) {
+                        plan.push((s.path.clone(), readable(s, "requested", None)));
+                    }
+                }
+            }
+            Forget::Prune => {
+                for d in self.store.dead(&list) {
+                    plan.push((d.path.clone(), from_dead(d)));
+                }
+            }
+            Forget::All => {
+                for (s, by) in list.iter().zip(shadow) {
+                    plan.push((s.path.clone(), readable(s, "all", by)));
+                }
+                for d in self.store.dead(&list) {
+                    if d.root.is_none() {
+                        plan.push((d.path.clone(), from_dead(d)));
+                    }
+                }
+            }
+        }
+        let mut removed = 0;
+        let mut freed = 0;
+        let mut records = Vec::with_capacity(plan.len());
+        for (path, mut rec) in plan {
+            if dry_run {
+                removed += 1;
+                freed += rec.file_bytes;
+            } else {
+                match self.store.remove(&path) {
+                    Ok(()) => {
+                        self.drop_cached(&path);
+                        rec.removed = true;
+                        removed += 1;
+                        freed += rec.file_bytes;
+                    }
+                    Err(e) => rec.error = Some(e.to_string()),
+                }
+            }
+            records.push(rec);
+        }
+        let remaining = if dry_run {
+            let gone = records.iter().filter(|r| r.root.is_some()).count();
+            list.len().saturating_sub(gone)
+        } else {
+            self.store.list().len()
+        };
+        let summary = ForgetSummary {
+            removed,
+            freed_bytes: freed,
+            human: human_bytes(freed),
+            dry_run,
+            remaining,
+            data_dir: self.store.dir().display().to_string(),
+        };
+        Ok(Envelope::new("forget", None, records, summary))
     }
 
     /// Read-only diagnostics for the snapshot store and configured focus roots.
@@ -564,6 +784,67 @@ impl Engine {
             hint: (!unsupported.is_empty()).then(|| "Rescan the affected roots.".into()),
         });
 
+        let list = self.store.list();
+        let usage = self.usage(&list);
+        let cap = self.max_data_cap();
+        let over = matches!(cap, Ok(Some(c)) if usage.total_bytes > c);
+        records.push(DoctorRecord {
+            check: "snapshot_storage".into(),
+            status: if cap.is_err() || over { "warn" } else { "ok" },
+            message: match &cap {
+                Err(e) => e.to_string(),
+                Ok(Some(c)) => format!(
+                    "{} snapshot(s), {} on disk; DREDGE_MAX_DATA is {}",
+                    list.len(),
+                    human_bytes(usage.total_bytes),
+                    human_bytes(*c)
+                ),
+                Ok(None) => format!(
+                    "{} snapshot(s), {} on disk",
+                    list.len(),
+                    human_bytes(usage.total_bytes)
+                ),
+            },
+            hint: over.then(|| {
+                "The next scan evicts snapshots to fit; `dredge forget --prune` frees space now."
+                    .into()
+            }),
+        });
+        let dead_snaps: Vec<&DeadFile> = usage
+            .dead
+            .iter()
+            .filter(|d| d.why != Dead::TempFile)
+            .collect();
+        records.push(DoctorRecord {
+            check: "prunable".into(),
+            status: if dead_snaps.is_empty() { "ok" } else { "warn" },
+            message: if dead_snaps.is_empty() {
+                "every snapshot can answer a query".into()
+            } else {
+                format!(
+                    "{} snapshot file(s), {}, that no query uses (shadowed, root gone, or unreadable)",
+                    dead_snaps.len(),
+                    human_bytes(dead_snaps.iter().map(|d| d.file_bytes).sum())
+                )
+            },
+            hint: (!dead_snaps.is_empty())
+                .then(|| "dredge forget --prune --dry-run lists them; drop --dry-run to remove them.".into()),
+        });
+        records.push(DoctorRecord {
+            check: "temp_files".into(),
+            status: if usage.temps == 0 { "ok" } else { "warn" },
+            message: if usage.temps == 0 {
+                "no leftover temp files".into()
+            } else {
+                format!(
+                    "{} temp file(s), {}, left by snapshot writes that never finished",
+                    usage.temps,
+                    human_bytes(usage.temp_bytes)
+                )
+            },
+            hint: (usage.temps > 0).then(|| "dredge forget --prune".into()),
+        });
+
         let data_path = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         let volume = volumes::list()
             .into_iter()
@@ -585,7 +866,7 @@ impl Engine {
             });
         }
 
-        let snaps = self.store.list();
+        let snaps = list;
         for p in &self.focus_roots {
             if !Path::new(p).exists() {
                 records.push(DoctorRecord {
@@ -661,8 +942,7 @@ mod tests {
     fn engine(dir: &Path) -> Engine {
         Engine::new(EngineConfig {
             data_dir: dir.to_path_buf(),
-            focus_roots: vec![],
-            verbose: false,
+            ..Default::default()
         })
     }
 
@@ -698,7 +978,7 @@ mod tests {
             .render(false);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["kind"], "browse");
-        assert_eq!(v["schema_version"], 3);
+        assert_eq!(v["schema_version"], 4);
         assert_eq!(v["records"][0]["name"], "sub");
         assert!(v["snapshot"]["age_secs"].is_u64());
         assert!(e.is_loaded());
@@ -744,5 +1024,118 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out.render(false)).unwrap();
         assert_eq!(v["kind"], "detail");
         assert_eq!(v["records"][0]["kind"], "dir");
+    }
+
+    fn scan_at(e: &Engine, path: &str) -> Result<ScanOut, Error> {
+        e.scan(
+            &FakeScanner,
+            path,
+            &ScanOptions::default(),
+            &ScanProgress::default(),
+        )
+    }
+
+    fn other_root() -> String {
+        crate::util::lexical_clean(if cfg!(windows) { r"C:\other" } else { "/other" })
+    }
+
+    #[test]
+    fn cap_evicts_dead_snapshots_first_then_the_oldest_and_keeps_the_new_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = root();
+        let sub = format!("{r}{}sub", std::path::MAIN_SEPARATOR);
+        scan_at(&engine(dir.path()), &sub).unwrap();
+        scan_at(&engine(dir.path()), &other_root()).unwrap();
+        let capped = Engine::new(EngineConfig {
+            data_dir: dir.path().to_path_buf(),
+            max_data: Some("1".into()),
+            ..Default::default()
+        });
+        let out = scan_at(&capped, &r).unwrap();
+        assert_eq!(out.summary.evicted, [sub, other_root()]);
+        let left = capped.store().list();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].meta.root, r);
+
+        let bad = Engine::new(EngineConfig {
+            data_dir: dir.path().to_path_buf(),
+            max_data: Some("2 gigs".into()),
+            ..Default::default()
+        });
+        assert_eq!(scan_at(&bad, &r).err().unwrap().code(), "invalid_argument");
+        let doc = bad.doctor();
+        let storage = doc
+            .records
+            .iter()
+            .find(|c| c.check == "snapshot_storage")
+            .unwrap();
+        assert_eq!(storage.status, "warn");
+    }
+
+    #[test]
+    fn forget_drops_the_cached_index_and_dry_run_keeps_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = engine(dir.path());
+        let r = root();
+        scan_at(&e, &r).unwrap();
+        assert!(!e.run(&Query::Detail { path: r.clone() }).is_error());
+        assert!(e.is_loaded());
+
+        let dry = e.forget(&Forget::Roots(vec![r.clone()]), true).unwrap();
+        assert_eq!(dry.summary.removed, 1);
+        assert_eq!(dry.summary.remaining, 0);
+        assert!(!dry.records[0].removed);
+        assert_eq!(e.store().list().len(), 1);
+        assert!(e.is_loaded());
+
+        let done = e.forget(&Forget::Roots(vec![r.clone()]), false).unwrap();
+        assert!(done.records[0].removed);
+        assert_eq!(done.records[0].reason, "requested");
+        assert!(!e.is_loaded());
+        let v: serde_json::Value =
+            serde_json::from_str(&e.run(&Query::Detail { path: r.clone() }).render(false)).unwrap();
+        assert_eq!(v["error"]["code"], "no_snapshot");
+
+        assert_eq!(
+            e.forget(&Forget::Roots(vec![]), false)
+                .err()
+                .unwrap()
+                .code(),
+            "invalid_argument"
+        );
+        let none = e.forget(&Forget::Prune, false).unwrap();
+        assert_eq!(none.summary.removed, 0);
+    }
+
+    #[test]
+    fn snapshots_report_totals_and_shadowing() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = engine(&dir.path().join("data"));
+        // Real directories, so neither root counts as gone.
+        let tree = dir.path().join("tree");
+        std::fs::create_dir_all(tree.join("sub")).unwrap();
+        let r = tree.to_string_lossy().into_owned();
+        let sub = tree.join("sub").to_string_lossy().into_owned();
+        scan_at(&e, &sub).unwrap();
+        scan_at(&e, &r).unwrap();
+        let out = e.snapshots_out();
+        assert!(out.records.iter().all(|x| x.root_exists));
+        assert_eq!(out.summary.snapshots, 2);
+        assert_eq!(out.summary.prunable, 1);
+        assert_eq!(
+            out.summary.file_bytes,
+            out.records.iter().map(|r| r.file_bytes).sum::<u64>()
+        );
+        let shadowed: Vec<_> = out
+            .records
+            .iter()
+            .filter(|x| x.shadowed_by.is_some())
+            .collect();
+        assert_eq!(shadowed.len(), 1);
+        assert_eq!(shadowed[0].root, sub);
+        assert_eq!(shadowed[0].shadowed_by.as_deref(), Some(r.as_str()));
+        let doc = e.doctor();
+        let prunable = doc.records.iter().find(|c| c.check == "prunable").unwrap();
+        assert_eq!(prunable.status, "warn");
     }
 }

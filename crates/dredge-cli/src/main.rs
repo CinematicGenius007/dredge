@@ -12,7 +12,7 @@ use std::time::Duration;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use dredge_core::output::schema_json;
 use dredge_core::util::human_bytes;
-use dredge_core::{Engine, EngineConfig, Error, Output, Query, ScanOptions, ScanProgress};
+use dredge_core::{Engine, EngineConfig, Error, Forget, Output, Query, ScanOptions, ScanProgress};
 use dredge_render::{Caps, ColorTier, Glyphs, Ink, Report, Segment};
 use dredge_scan::WalkScanner;
 
@@ -40,8 +40,24 @@ struct Cli {
 enum Command {
     /// List volumes with free space, snapshot age, and the configured focus roots.
     Volumes,
-    /// List saved snapshots.
+    /// List saved snapshots, their total size, and which ones no query uses.
     Snapshots,
+    /// Remove dredge's own snapshot files. Touches nothing outside the data directory.
+    #[command(group(clap::ArgGroup::new("what").required(true).args(["roots", "prune", "all"])))]
+    Forget {
+        /// Remove the snapshot rooted at each path (exactly that root, not nested ones).
+        roots: Vec<String>,
+        /// Remove snapshots no query uses (shadowed by a newer covering snapshot, root gone,
+        /// unreadable) and temp files left by interrupted writes.
+        #[arg(long)]
+        prune: bool,
+        /// Remove every snapshot.
+        #[arg(long)]
+        all: bool,
+        /// List what would be removed and remove nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Check snapshot storage, focus roots, and available disk space.
     Doctor,
     /// Print shell completion scripts.
@@ -416,6 +432,24 @@ fn main() -> ExitCode {
         } => return run_bar(&engine, &path, width, color, focus, glyphs),
         Command::Volumes => vec![engine.run(&Query::Volumes)],
         Command::Snapshots => vec![engine.run(&Query::Snapshots)],
+        Command::Forget {
+            roots,
+            prune,
+            all,
+            dry_run,
+        } => {
+            let what = if all {
+                Forget::All
+            } else if prune {
+                Forget::Prune
+            } else {
+                Forget::Roots(roots)
+            };
+            vec![engine
+                .forget(&what, dry_run)
+                .map(Output::Forget)
+                .unwrap_or_else(|e| Output::from_error(&e))]
+        }
         Command::Doctor => vec![engine.run(&Query::Doctor)],
         Command::Browse { path, limit } => vec![engine.run(&Query::Browse { path, limit })],
         Command::Largest {

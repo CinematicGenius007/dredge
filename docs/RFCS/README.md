@@ -31,3 +31,4 @@ Changes that do not touch these need no RFC. A bug fix does not need one.
 - **Test plan**: which fixtures and parity tests prove it.
 
 - [0001](0001-lazy-storage-and-honest-freshness.md): lazy snapshot storage, reuse of recent scans, honest freshness (Draft)
+- [0002](0002-snapshot-storage-management.md): managing the space dredge itself uses (Accepted)

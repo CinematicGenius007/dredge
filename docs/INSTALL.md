@@ -129,7 +129,8 @@ a running binary. The script wraps the same steps as Windows:
 ```
 
 Snapshots live in `~/.local/share/dredge` on Linux and `~/Library/Application Support/dredge`
-on macOS (or `DREDGE_DATA_DIR` if set).
+on macOS (or `DREDGE_DATA_DIR` if set). `dredge snapshots` shows how much space they take, and
+`dredge forget --prune` removes the ones no query uses (see the README).
 
 ## Cleaning up
 
@@ -142,8 +143,10 @@ cd C:\path\to\dredge
 cargo clean
 ```
 
-Snapshots live in `%LOCALAPPDATA%\dredge` (or `DREDGE_DATA_DIR` if set). Delete the `.dredge`
-files there to force a fresh scan; dredge never deletes them itself.
+Snapshots live in `%LOCALAPPDATA%\dredge` (or `DREDGE_DATA_DIR` if set). `dredge snapshots`
+shows how much space they take; `dredge forget --prune` removes the ones no query uses,
+`dredge forget <root>` one root's, and `dredge forget --all` every one. A rescan replaces a
+root's snapshot, so none of this is needed for a fresh scan.
 
 ## Prebuilt release binaries
 

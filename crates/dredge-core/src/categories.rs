@@ -982,12 +982,15 @@ fn has_hard_links(idx: &Index, i: u32) -> bool {
 }
 
 /// Cleanup hints under `root`, largest first. Text only: dredge never runs the commands.
+/// `own_data` is dredge's own data directory, when it lies inside this snapshot: it gets the
+/// `dredge_snapshots` hint, which points at `dredge forget` rather than any delete command.
 pub fn insights(
     idx: &Index,
     classes: &Classes,
     root: u32,
     limit: usize,
     os: Os,
+    own_data: Option<u32>,
 ) -> (Vec<InsightRecord>, InsightsSummary) {
     let hints: Vec<&Hint> = HINTS.iter().filter(|h| h.os.applies(os)).collect();
     let mut w = Walker::new(idx, root);
@@ -996,6 +999,22 @@ pub fn insights(
     let mut i = root;
     while i < end {
         w.advance(i, |_| {});
+        if Some(i) == own_data {
+            let bytes = idx.allocated(i);
+            if bytes >= MIN_INSIGHT_BYTES {
+                rows.push(InsightRecord {
+                    id: "dredge_snapshots",
+                    category: classes.category(i).unwrap_or(Other),
+                    path: idx.path(i),
+                    allocated_bytes: bytes,
+                    human: human_bytes(bytes),
+                    message: "dredge's own snapshots. `dredge snapshots` lists them; `dredge forget --prune` removes the ones no query uses, and `dredge forget <root>` removes one.".to_string(),
+                    suggested_command: "dredge forget --prune".to_string(),
+                });
+            }
+            i = idx.subtree_end(i);
+            continue;
+        }
         if let Some(h) = hints.iter().find(|h| w.hint_applies(h, i)) {
             let bytes = idx.allocated(i);
             if bytes >= MIN_INSIGHT_BYTES && !unsafe_to_suggest(idx, i, os) {
@@ -1094,7 +1113,7 @@ mod tests {
     }
 
     fn hints(idx: &Index, os: Os) -> Vec<InsightRecord> {
-        insights(idx, &classify(idx, os), 0, 100, os).0
+        insights(idx, &classify(idx, os), 0, 100, os, None).0
     }
 
     fn sample() -> Index {
@@ -1449,6 +1468,39 @@ mod tests {
     }
 
     #[test]
+    fn own_data_dir_gets_its_own_hint_and_nothing_nested() {
+        let idx = build("/home/u", false, |b| {
+            let d = dirs(b, 0, ".local/share/dredge");
+            b.add(d, RawEntry::file("home-u-0123.dredge", 150 * MIB));
+            // Never a second hint inside dredge's own directory.
+            let x = b.add(d, RawEntry::dir("x"));
+            b.add(x, RawEntry::file("package-lock.json", 1));
+            let nm = b.add(x, RawEntry::dir("node_modules"));
+            b.add(nm, RawEntry::file("blob", 300 * MIB));
+            let small = dirs(b, 0, "elsewhere/dredge");
+            b.add(small, RawEntry::file("s.dredge", MIB));
+        });
+        let own = idx.resolve("/home/u/.local/share/dredge");
+        let classes = classify(&idx, Os::Linux);
+        let (rows, _) = insights(&idx, &classes, 0, 100, Os::Linux, own);
+        assert_eq!(
+            rows.len(),
+            1,
+            "{:?}",
+            rows.iter().map(|r| &r.path).collect::<Vec<_>>()
+        );
+        assert_eq!(rows[0].id, "dredge_snapshots");
+        assert_eq!(rows[0].suggested_command, "dredge forget --prune");
+        assert!(!rows[0].suggested_command.contains("rm "));
+        // Below the usual minimum, no hint at all.
+        let small = idx.resolve("/home/u/elsewhere/dredge");
+        assert!(insights(&idx, &classes, 0, 100, Os::Linux, small)
+            .0
+            .iter()
+            .all(|r| r.id != "dredge_snapshots"));
+    }
+
+    #[test]
     fn hints_are_sorted_limited_and_note_hard_links() {
         let idx = build("/Users/u", true, |b| {
             let c = dirs(b, 0, "Library/Caches");
@@ -1465,7 +1517,7 @@ mod tests {
             let other = b.add(0, RawEntry::dir("zz"));
             b.add(other, e);
         });
-        let (rows, sum) = insights(&idx, &classify(&idx, Os::Macos), 0, 2, Os::Macos);
+        let (rows, sum) = insights(&idx, &classify(&idx, Os::Macos), 0, 2, Os::Macos, None);
         assert_eq!(sum.insights, 4);
         assert_eq!(sum.shown, 2);
         assert!(sum.truncated);

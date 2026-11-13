@@ -24,7 +24,7 @@ dredge-cli ──► dredge-mcp ──► dredge-core ◄── dredge-scan
 
 | Crate | Owns | Does not own |
 |---|---|---|
-| `dredge-core` | `Index` + `IndexBuilder`, size accounting rules, snapshot IO, `Store` (data dir), `Engine` (query functions), output types (serde + schemars), `Scanner` trait, `volumes()` | any filesystem walking, any `cfg(windows)` code |
+| `dredge-core` | `Index` + `IndexBuilder`, size accounting rules, snapshot IO, `Store` (data dir, prune and removal rules, RFC 0002), `Engine` (query functions), output types (serde + schemars), `Scanner` trait, `volumes()` | any filesystem walking, any `cfg(windows)` code |
 | `dredge-scan` | `WalkScanner`, platform directory enumeration (`cfg` modules + portable fallback) | queries, JSON, snapshots |
 | `dredge-render` | pure bar/legend/report rendering (Bayer dithering, color tiers, plain fallback) from `Segment`s to strings | I/O, terminal detection, queries |
 | `dredge-tui` | `dredge tui`: pure state machine (`update(state, event) -> (state, effects)`), ratatui drawing, and a thin runner that calls `Engine`, restores the terminal on every exit path and copies text via OSC 52 | queries, any execution of suggested commands, any deletion |
