@@ -5,6 +5,8 @@ use std::path::Path;
 use dredge_core::RawEntry;
 
 mod generic;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -55,7 +57,11 @@ pub fn read_dir(path: &Path, ctx: &PlatformCtx, out: &mut Vec<RawEntry>) -> Resu
             r => r,
         }
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        macos::read_dir(path, ctx.root_dev, out)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         unix::read_dir(path, ctx.root_dev, out)
     }

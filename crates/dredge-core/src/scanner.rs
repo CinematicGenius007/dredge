@@ -9,7 +9,7 @@ use crate::model::Index;
 
 #[derive(Clone, Debug, Default)]
 pub struct ScanOptions {
-    /// Worker threads; `None` = logical cores.
+    /// Worker threads; `None` = logical cores (at most 4 on macOS).
     pub threads: Option<usize>,
 }
 

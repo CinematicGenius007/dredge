@@ -50,7 +50,7 @@ enum Command {
     /// Several paths print one JSON document per line.
     Scan {
         paths: Vec<String>,
-        /// Worker threads (default: logical cores).
+        /// Worker threads (default: logical cores, at most 4 on macOS).
         #[arg(long)]
         threads: Option<usize>,
         /// Do not print progress to stderr.

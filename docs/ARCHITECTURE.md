@@ -145,8 +145,8 @@ atomically, so an interrupted scan leaves no partial file.
   (short critical section: intern names, append records) which returns child directory
   ids, then spawns one task per subdirectory. If profiling shows contention, replace the
   mutex with a channel to a single builder thread; the `IndexBuilder` API doesn't change.
-- Default threads = logical cores (directory enumeration is I/O-latency-bound, so this is
-  tuned by benchmark, not guessed; `ScanOptions::threads` overrides).
+- Default threads = logical cores, capped at 4 on macOS where APFS listing contends in the
+  kernel past that (measured in `BENCHMARKS.md`; `ScanOptions::threads` overrides).
 - Platform enumeration is one function behind `cfg`:
   `fn read_dir(path, &mut Vec<RawEntry>) -> Result<(), DirError>`.
 
@@ -154,6 +154,7 @@ atomically, so an interrupted scan leaves no partial file.
 |---|---|---|
 | Windows (primary) | `windows-sys`: open directory handle (`FILE_FLAG_BACKUP_SEMANTICS`, full sharing, no admin), enumerate with `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)` in large buffers. One call returns, per entry: `AllocationSize`, `EndOfFile`, attributes, reparse tag, 128-bit file ID, mtime. Files are never opened. | `AllocationSize` (exact, handles compression/sparse) |
 | Unix | `std::fs` + `MetadataExt` | `st_blocks * 512`; `nlink`, `(dev, ino)` |
+| macOS | `getattrlistbulk(2)` in a 256 KiB per-thread buffer: one call returns name, type, device, mtime, BSD flags, inode, link count, logical and allocated size for many entries. Falls back to the Unix path on file systems that reject it. Mount points come from `ATTR_DIR_MOUNTSTATUS` (a mount point reports the covered directory's device ID), which also flags automount triggers and `/System/Volumes/Data` when scanning `/`. Directories marked `SF_DATALESS` (iCloud/File Provider placeholders) are flagged `cloud` and not entered. | `ATTR_FILE_ALLOCSIZE` (equals `st_blocks * 512`) |
 | Fallback (any other case, and Windows filesystems that reject the extended class) | `std::fs::read_dir` + metadata | logical size rounded up to 4096, flag `estimated` |
 
 The plan suggested `FindFirstFileExW`. I'm using `FileIdExtdDirectoryInfo` instead
