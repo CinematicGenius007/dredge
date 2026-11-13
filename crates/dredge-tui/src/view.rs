@@ -10,8 +10,8 @@ use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::state::{
-    legend_cols, progress_text, Cat, Insight, Overview, Scan, State, View, INSIGHT_LINES,
-    MIN_HEIGHT, MIN_WIDTH,
+    crumbs, legend_cols, progress_text, Cat, Input, Insight, Level, Overview, Scan, State, View,
+    INSIGHT_LINES, MIN_HEIGHT, MIN_WIDTH,
 };
 
 /// How colors are emitted. The bar's look is the same as `dredge bar` on every tier.
@@ -84,11 +84,11 @@ pub fn draw(f: &mut Frame, s: &State, theme: Theme) {
         match s.view {
             View::Overview => overview(buf, s, body, theme),
             View::Paths => paths(buf, s, body),
-            View::Browse => browse(buf, s, body),
+            View::Browse => browse(buf, s, body, theme),
             View::Insights => insights(buf, s, body),
         }
     }
-    status(buf, s, Rect::new(0, area.height - 1, w, 1));
+    status(buf, s, Rect::new(0, area.height - 1, w, 1), theme);
     if theme == Theme::Plain {
         for cell in &mut buf.content {
             cell.set_fg(Color::Reset).set_bg(Color::Reset);
@@ -236,21 +236,90 @@ fn hints(s: &State) -> &'static str {
     }
     match s.view {
         View::Overview if s.overview.is_none() => "r scan  ? help  q quit",
-        View::Overview => "\u{2190}\u{2191}\u{2193}\u{2192} move  Enter open  i insights  r rescan  ? help  q quit",
-        View::Paths => "\u{2191}\u{2193} select  Enter browse  Esc back  i insights  ? help  q quit",
-        View::Browse => "\u{2191}\u{2193} select  Enter open  Esc up  i insights  r rescan  q quit",
-        View::Insights => "\u{2191}\u{2193} select  y copy command  i or Esc back  q quit",
+        View::Overview => "\u{2190}\u{2191}\u{2193}\u{2192} move  Enter open  b browse  i insights  r rescan  ? help  q quit",
+        View::Paths => "\u{2191}\u{2193} select  Enter browse  y copy  Esc back  i insights  ? help  q quit",
+        View::Browse if s.current().and_then(Level::selected).is_some_and(|e| !e.is_dir) => {
+            "\u{2191}\u{2193} move  \u{2190} back  y copy path  / filter  g jump  Esc exit  ? help"
+        }
+        View::Browse => "\u{2191}\u{2193} move  \u{2192} open  \u{2190} back  / filter  g jump  y copy  Esc exit  ? help",
+        View::Insights => "\u{2191}\u{2193} select  Enter show  y copy command  i or Esc back  q quit",
     }
 }
 
-fn status(buf: &mut Buffer, s: &State, rect: Rect) {
+/// Left text and a right-aligned note on one line; the note is dropped when it does not fit.
+fn split_line(left: Vec<Span<'static>>, right: Span<'static>, w: usize) -> Line<'static> {
+    let lw: usize = left
+        .iter()
+        .map(|sp| UnicodeWidthStr::width(sp.content.as_ref()))
+        .sum();
+    let rw = UnicodeWidthStr::width(right.content.as_ref());
+    let mut spans = left;
+    if lw + 2 + rw <= w {
+        spans.push(Span::raw(" ".repeat(w - lw - rw)));
+        spans.push(right);
+    }
+    Line::from(spans)
+}
+
+/// The prompt line while `/` or `g` owns the keyboard.
+fn prompt(s: &State, w: usize, theme: Theme) -> Option<Line<'static>> {
+    let input = s.input.filter(|_| s.view == View::Browse && !s.help)?;
+    let level = s.current()?;
+    Some(match input {
+        Input::Filter => {
+            let shown = level.visible().len();
+            let total = level.listing.entries.len();
+            let mut accent = BOLD;
+            if theme != Theme::Plain {
+                accent = accent.fg(theme.ink(Ink::Caches));
+            }
+            split_line(
+                vec![
+                    Span::styled("/ ", accent),
+                    Span::raw(fit(&level.filter, w.saturating_sub(4))),
+                    Span::styled("\u{258f}", BOLD),
+                ],
+                Span::styled(format!("{shown} of {total}  Enter keep  Esc clear"), DIM),
+                w,
+            )
+        }
+        Input::Jump => {
+            let n = crumbs(&s.root, &level.listing.path).len().min(9);
+            split_line(
+                vec![
+                    Span::styled("g", BOLD),
+                    Span::raw(" jump to level   "),
+                    Span::styled(
+                        if n > 1 {
+                            format!("1\u{2013}{n}")
+                        } else {
+                            "1".into()
+                        },
+                        BOLD,
+                    ),
+                    Span::raw(" pick   "),
+                    Span::styled("~", BOLD),
+                    Span::raw(" root"),
+                ],
+                Span::styled("Esc cancel", DIM),
+                w,
+            )
+        }
+    })
+}
+
+fn status(buf: &mut Buffer, s: &State, rect: Rect, theme: Theme) {
     let w = usize::from(rect.width);
-    let line = match &s.status {
-        Some(st) => Line::styled(
-            fit(&st.text, w),
-            if st.error { ERROR } else { Style::new() },
-        ),
-        None => Line::styled(fit(hints(s), w), DIM),
+    let line = if let Some(p) = prompt(s, w, theme) {
+        p
+    } else {
+        match &s.status {
+            Some(st) => Line::styled(
+                fit(&st.text, w),
+                if st.error { ERROR } else { Style::new() },
+            ),
+            None => Line::styled(fit(hints(s), w), DIM),
+        }
     };
     put(buf, rect, 0, line);
 }
@@ -498,60 +567,283 @@ fn paths(buf: &mut Buffer, s: &State, body: Rect) {
     }
 }
 
-fn browse(buf: &mut Buffer, s: &State, body: Rect) {
-    let Some(level) = s.stack.last() else { return };
+/// The name the breadcrumb shows for the scan root: `~` for the home directory, else its
+/// last component.
+fn root_label(root: &str) -> String {
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty());
+    if home.is_some_and(|h| std::path::Path::new(&h) == std::path::Path::new(root)) {
+        return "~".into();
+    }
+    std::path::Path::new(root)
+        .file_name()
+        .map_or_else(|| root.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// `root › a › b › current`, numbered while `g` is pending. Middle levels fold into `…` when
+/// the line is too narrow, so the root and the current folder always show.
+fn breadcrumb(s: &State, level: &Level, w: usize) -> Line<'static> {
+    let paths = crumbs(&s.root, &level.listing.path);
+    let numbered = s.input == Some(Input::Jump);
+    let mut labels: Vec<(Option<usize>, String)> = paths
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let label = if i == 0 && paths.len() > 1 || p == &s.root {
+                root_label(&s.root)
+            } else {
+                std::path::Path::new(p)
+                    .file_name()
+                    .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
+            };
+            (Some(i + 1).filter(|n| numbered && *n <= 9), label)
+        })
+        .collect();
+
     let l = &level.listing;
-    let more = if l.remaining > 0 {
-        format!("  (+{} more)", l.remaining)
+    let mut right = if level.filter.is_empty() {
+        format!("{}  \u{b7}  {} items", l.human, l.entries.len())
     } else {
-        String::new()
+        format!(
+            "{} of {} match \u{201c}{}\u{201d}",
+            level.visible().len(),
+            l.entries.len(),
+            level.filter
+        )
     };
-    subtitle(buf, body, format!("{}  {}{more}", l.path, l.human));
+    if l.remaining > 0 {
+        right.push_str(&format!("  (+{} more)", l.remaining));
+    }
+
+    let tag_w = |t: &Option<usize>| t.map_or(0, |n| n.to_string().len() + 3);
+    let width = |ls: &[(Option<usize>, String)]| -> usize {
+        ls.iter()
+            .map(|(t, s)| tag_w(t) + UnicodeWidthStr::width(s.as_str()))
+            .sum::<usize>()
+            + 3 * ls.len().saturating_sub(1)
+    };
+    let room = w.saturating_sub(UnicodeWidthStr::width(right.as_str()) + 2);
+    let room = if room < 12 { w } else { room };
+    // Fold middle levels into one ellipsis, oldest first.
+    while width(&labels) > room && labels.len() > 2 {
+        if labels[1].1 == "\u{2026}" {
+            if labels.len() == 3 {
+                break;
+            }
+            labels.remove(2);
+        } else {
+            labels[1] = (None, "\u{2026}".into());
+        }
+    }
+    let n = labels.len();
+    let mut spans = Vec::new();
+    for (i, (tag, label)) in labels.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" \u{203a} ", DIM));
+        }
+        if let Some(t) = tag {
+            spans.push(Span::styled(
+                format!(" {t} "),
+                BOLD.add_modifier(Modifier::REVERSED),
+            ));
+            spans.push(Span::raw(" "));
+        }
+        let last = i + 1 == n;
+        spans.push(Span::styled(label, if last { BOLD } else { Style::new() }));
+    }
+    let used: usize = spans
+        .iter()
+        .map(|sp| UnicodeWidthStr::width(sp.content.as_ref()))
+        .sum();
+    if used > w {
+        return Line::styled(fit_tail(&level.listing.path, w), BOLD);
+    }
+    split_line(spans, Span::styled(right, DIM), w)
+}
+
+fn share_text(p: Option<f64>) -> String {
+    match p {
+        None => String::new(),
+        Some(p) if p > 0.0 && p < 1.0 => "<1%".into(),
+        Some(p) => format!("{p:.0}%"),
+    }
+}
+
+fn browse(buf: &mut Buffer, s: &State, body: Rect, theme: Theme) {
+    let Some(level) = s.current() else { return };
+    let w = usize::from(body.width);
+    put(buf, body, 0, breadcrumb(s, level, w));
+    let l = &level.listing;
     let area = list_area(body);
-    let w = usize::from(area.width);
     if l.entries.is_empty() {
-        put(buf, area, 0, Line::styled("(empty)", DIM));
+        let mut row = 0;
+        if level.up_row() {
+            put(buf, area, 0, up_line(s, level, level.on_up(), w, theme));
+            row = 1;
+        }
+        put(
+            buf,
+            area,
+            row,
+            Line::styled("  Empty folder. \u{2190} goes back.", DIM),
+        );
         return;
     }
+    let visible = level.visible();
+    if visible.is_empty() {
+        put(
+            buf,
+            area,
+            0,
+            Line::styled(
+                fit(
+                    &format!(
+                        "  Nothing here matches \u{201c}{}\u{201d}. Esc clears the filter.",
+                        level.filter
+                    ),
+                    w,
+                ),
+                DIM,
+            ),
+        );
+        return;
+    }
+
+    // marker 2, name, [2 bar], 2 size, 2 share
     let hw = l
         .entries
         .iter()
         .map(|e| e.human.chars().count())
         .max()
-        .unwrap_or(0);
-    let name_w = w.saturating_sub(hw + 8).max(4);
-    for (r, e) in l
-        .entries
-        .iter()
-        .enumerate()
-        .skip(level.offset)
-        .take(usize::from(area.height))
-    {
+        .unwrap_or(0)
+        .max(4);
+    let sw = 5;
+    let bar_w = if w >= 60 { 12 } else { 0 };
+    // The bar takes its own width plus a two-column gap on each side of its cells.
+    let bar_total = if bar_w > 0 { bar_w + 2 } else { 0 };
+    let name_w = w.saturating_sub(2 + bar_total + 2 + hw + 2 + sw).max(4);
+    let gap = |n: usize| " ".repeat(n);
+
+    let head = format!(
+        "  {}{}{}{}{}{}",
+        pad("NAME", name_w),
+        gap(bar_total),
+        gap(2),
+        lpad("SIZE", hw),
+        gap(2),
+        lpad("SHARE", sw)
+    );
+    put(buf, area, 0, Line::styled(fit(&head, w), DIM));
+    let rows = Rect::new(
+        area.x,
+        area.y + 1,
+        area.width,
+        area.height.saturating_sub(1),
+    );
+
+    let accent = |ink: Ink| {
+        if theme == Theme::Plain {
+            Style::new()
+        } else {
+            Style::new().fg(theme.ink(ink))
+        }
+    };
+    let up = usize::from(level.up_row());
+    let end = (level.offset + usize::from(rows.height)).min(up + visible.len());
+    for r in level.offset..end {
+        let selected = r == level.sel;
+        if r < up {
+            put(
+                buf,
+                rows,
+                r - level.offset,
+                up_line(s, level, selected, w, theme),
+            );
+            continue;
+        }
+        let e = &l.entries[visible[r - up]];
         let name = if e.is_dir {
             format!("{}/", e.name)
         } else {
             e.name.clone()
         };
-        let pct = e
-            .pct_of_parent
-            .map_or("      ".to_string(), |p| format!("{p:>5.1}%"));
-        let text = format!(
-            "{} {} {pct}",
-            pad(&fit(&name, name_w), name_w),
-            lpad(&e.human, hw)
-        );
-        let style = if r == level.sel {
-            SELECTED
+        let row_style = if selected {
+            SELECTED.add_modifier(Modifier::BOLD)
         } else {
             Style::new()
         };
-        put(
-            buf,
-            area,
-            r - level.offset,
-            Line::styled(pad(&fit(&text, w), w), style),
-        );
+        let mut spans = vec![Span::styled(
+            if selected { "\u{258c} " } else { "  " },
+            accent(Ink::Developer).add_modifier(Modifier::BOLD),
+        )];
+        spans.push(Span::styled(pad(&fit(&name, name_w), name_w), row_style));
+        if bar_w > 0 {
+            let cells = bar_w - 2;
+            let filled = e.pct_of_parent.map_or(0, |p| {
+                let n = (p / 100.0 * cells as f64).round() as usize;
+                if p > 0.0 {
+                    n.clamp(1, cells)
+                } else {
+                    0
+                }
+            });
+            spans.push(Span::styled(gap(2), row_style));
+            spans.push(Span::styled(
+                "\u{2501}".repeat(filled),
+                accent(if e.is_dir { Ink::Developer } else { Ink::Other }).patch(row_style),
+            ));
+            spans.push(Span::styled(
+                "\u{2500}".repeat(cells - filled),
+                DIM.patch(row_style),
+            ));
+            spans.push(Span::styled(gap(2), row_style));
+        }
+        spans.push(Span::styled(
+            format!("{}{}", gap(2), lpad(&e.human, hw)),
+            row_style,
+        ));
+        spans.push(Span::styled(
+            format!("{}{}", gap(2), lpad(&share_text(e.pct_of_parent), sw)),
+            if selected { row_style } else { DIM },
+        ));
+        put(buf, rows, r - level.offset, Line::from(spans));
     }
+}
+
+/// `../  parent`: the row that goes up a level, in the name lane, with no size.
+fn up_line(s: &State, level: &Level, selected: bool, w: usize, theme: Theme) -> Line<'static> {
+    let parent = std::path::Path::new(&level.listing.path)
+        .parent()
+        .map(|p| {
+            if p == std::path::Path::new(&s.root) {
+                root_label(&s.root)
+            } else {
+                p.file_name()
+                    .map_or_else(|| p.to_string_lossy(), |n| n.to_string_lossy())
+                    .into_owned()
+            }
+        })
+        .unwrap_or_default();
+    let style = if selected {
+        SELECTED.add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+    };
+    let marker = if theme == Theme::Plain {
+        Style::new()
+    } else {
+        Style::new().fg(theme.ink(Ink::Developer))
+    };
+    let tail = fit(&format!("  {parent}"), w.saturating_sub(5));
+    let fill = " ".repeat(w.saturating_sub(5 + tail.width()));
+    Line::from(vec![
+        Span::styled(
+            if selected { "\u{258c} " } else { "  " },
+            marker.add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("../", style),
+        Span::styled(tail, DIM.patch(style)),
+        Span::styled(fill, style),
+    ])
 }
 
 /// The command as displayed: control characters made visible, with a marker when there were any.
@@ -638,9 +930,19 @@ fn help(buf: &mut Buffer, body: Rect) {
             "Enter",
             "open: category \u{2192} largest paths \u{2192} folders",
         ),
-        ("Esc Backspace", "up one level, then back to categories"),
+        ("b", "browse the scan root as folders"),
+        (
+            "\u{2192} \u{2190}",
+            "open a folder / up one level, past where you came in",
+        ),
+        ("/", "filter this folder; Enter keeps it, Esc clears"),
+        ("g 1-9 ~", "jump to a breadcrumb level, or ~ for the root"),
+        ("Esc", "leave browse (or clear the filter)"),
         ("i", "toggle cleanup insights"),
-        ("y", "copy the selected insight's command (never run)"),
+        (
+            "y",
+            "copy the selected path, or an insight's command (never run)",
+        ),
         ("r", "rescan the root in the background"),
         ("?", "toggle this help"),
         ("q Ctrl-C", "quit"),
@@ -962,8 +1264,13 @@ mod tests {
         let s = press(loaded((80, 24)), Key::Enter);
         let mut s = update(s, Event::Browsed(Ok(big_listing(100)))).0;
         let t = text(&render(&s, Theme::TrueColor));
+        // ../ takes the first row, so one entry fewer fits.
         assert!(
-            t.contains("item000") && t.contains("item020") && !t.contains("item021"),
+            t.contains("../  data") && t.contains("item018") && !t.contains("item019"),
+            "{t}"
+        );
+        assert!(
+            t.contains("NAME") && t.contains("SIZE") && t.contains("SHARE"),
             "{t}"
         );
         for _ in 0..50 {
@@ -972,7 +1279,7 @@ mod tests {
         let b = render(&s, Theme::TrueColor);
         let t = text(&b);
         assert!(t.contains("item050"), "{t}");
-        assert!(!t.contains("item000") && !t.contains("item029"), "{t}");
+        assert!(!t.contains("item000") && !t.contains("item030"), "{t}");
         // The selected row is the last visible one, and it is highlighted.
         let sel_row = (0..24u16)
             .find(|&y| {
@@ -982,13 +1289,147 @@ mod tests {
                     .contains("item050")
             })
             .unwrap();
-        assert!(b[(0, sel_row)].modifier.contains(Modifier::REVERSED));
+        assert_eq!(b[(0, sel_row)].symbol(), "\u{258c}");
+        assert!(b[(2, sel_row)].modifier.contains(Modifier::REVERSED));
         assert_eq!(sel_row, 22);
         let s = press(s, Key::End);
         let t = text(&render(&s, Theme::TrueColor));
         assert!(t.contains("item099") && !t.contains("item050"), "{t}");
         let s = press(s, Key::Home);
         assert!(text(&render(&s, Theme::TrueColor)).contains("item000"));
+    }
+
+    fn tree(path: &str, names: &[(&str, bool, f64)]) -> Listing {
+        Listing {
+            path: path.into(),
+            human: "84.2 GiB".into(),
+            entries: names
+                .iter()
+                .map(|&(n, d, p)| Entry {
+                    name: n.into(),
+                    path: format!("{path}/{n}"),
+                    is_dir: d,
+                    bytes: 1,
+                    human: "1.0 GiB".into(),
+                    pct_of_parent: Some(p),
+                })
+                .collect(),
+            remaining: 0,
+        }
+    }
+
+    fn row_with(b: &Buffer, needle: &str) -> Option<String> {
+        (0..b.area.height)
+            .map(|y| {
+                (0..b.area.width)
+                    .map(|x| b[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .find(|r| r.contains(needle))
+    }
+
+    #[test]
+    fn browse_shows_breadcrumb_bars_and_share() {
+        let s = press(loaded((80, 24)), Key::Char('b'));
+        let s = update(s, Event::Browsed(Ok(tree("/data", &[("proj", true, 0.0)])))).0;
+        let s = press(s, Key::Right);
+        let s = update(
+            s,
+            Event::Browsed(Ok(tree(
+                "/data/proj",
+                &[("app", true, 51.0), ("notes.txt", false, 0.4)],
+            ))),
+        )
+        .0;
+        let b = render(&s, Theme::TrueColor);
+        let crumb = row_with(&b, "\u{203a}").unwrap();
+        assert!(crumb.starts_with("data \u{203a} proj"), "{crumb}");
+        assert!(
+            crumb.contains("84.2 GiB") && crumb.contains("2 items"),
+            "{crumb}"
+        );
+        let app = row_with(&b, "app/").unwrap();
+        assert!(
+            app.contains("\u{2501}") && app.trim_end().ends_with("51%"),
+            "{app}"
+        );
+        let file = row_with(&b, "notes.txt").unwrap();
+        assert!(
+            file.trim_end().ends_with("<1%") && !file.contains("notes.txt/"),
+            "{file}"
+        );
+        // A file selected: the hints say y copies it and drop "open".
+        let s = press(s, Key::Down);
+        let t = text(&render(&s, Theme::TrueColor));
+        assert!(t.contains("y copy path"), "{t}");
+    }
+
+    #[test]
+    fn breadcrumb_numbers_while_jumping_and_folds_when_narrow() {
+        let mut s = press(loaded((80, 24)), Key::Char('b'));
+        s = update(s, Event::Browsed(Ok(tree("/data", &[("a", true, 1.0)])))).0;
+        for p in [
+            "/data/a",
+            "/data/a/bb",
+            "/data/a/bb/ccc",
+            "/data/a/bb/ccc/dddd",
+        ] {
+            s = press(s, Key::Right);
+            let name = match p.rsplit('/').next().unwrap() {
+                "a" => "bb",
+                "bb" => "ccc",
+                "ccc" => "dddd",
+                _ => "e",
+            };
+            s = update(s, Event::Browsed(Ok(tree(p, &[(name, true, 1.0)])))).0;
+        }
+        let s = press(s, Key::Char('g'));
+        let t = text(&render(&s, Theme::TrueColor));
+        assert!(t.contains(" 1  data") && t.contains(" 5  dddd"), "{t}");
+        assert!(
+            t.contains("jump to level") && t.contains("1\u{2013}5"),
+            "{t}"
+        );
+        // Narrow: the middle folds into an ellipsis but root and current stay.
+        let s = update(press(s, Key::Esc), Event::Resize(34, 12)).0;
+        let crumb = row_with(&render(&s, Theme::TrueColor), "\u{203a}").unwrap();
+        assert!(
+            crumb.contains("data") && crumb.contains("\u{2026}") && crumb.contains("dddd"),
+            "{crumb}"
+        );
+    }
+
+    #[test]
+    fn filter_bar_and_empty_states() {
+        let s = press(loaded((80, 24)), Key::Char('b'));
+        let s = update(
+            s,
+            Event::Browsed(Ok(tree(
+                "/data",
+                &[
+                    ("next", true, 9.0),
+                    ("react", true, 5.0),
+                    ("next-auth", true, 1.0),
+                ],
+            ))),
+        )
+        .0;
+        let s = ["/", "n", "e", "x"]
+            .iter()
+            .fold(s, |s, c| press(s, Key::Char(c.chars().next().unwrap())));
+        let t = text(&render(&s, Theme::TrueColor));
+        assert!(t.contains("/ nex") && t.contains("2 of 3"), "{t}");
+        assert!(!t.contains("react"), "{t}");
+        let s = press(press(s, Key::Char('z')), Key::Enter);
+        let t = text(&render(&s, Theme::TrueColor));
+        assert!(t.contains("Nothing here matches"), "{t}");
+        assert!(t.contains("0 of 3 match"), "{t}");
+        let s = update(
+            press(press(s, Key::Esc), Key::Right),
+            Event::Browsed(Ok(tree("/data/next", &[]))),
+        )
+        .0;
+        assert!(text(&render(&s, Theme::TrueColor)).contains("Empty folder"));
     }
 
     #[test]
@@ -1031,7 +1472,9 @@ mod tests {
         ));
         for k in [
             "Enter",
-            "Esc Backspace",
+            "Esc",
+            "filter",
+            "breadcrumb",
             "insights",
             "never run",
             "rescan",
