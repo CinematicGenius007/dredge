@@ -1035,30 +1035,32 @@ mod tests {
         )
     }
 
-    fn other_root() -> String {
-        crate::util::lexical_clean(if cfg!(windows) { r"C:\other" } else { "/other" })
-    }
-
     #[test]
     fn cap_evicts_dead_snapshots_first_then_the_oldest_and_keeps_the_new_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let r = root();
-        let sub = format!("{r}{}sub", std::path::MAIN_SEPARATOR);
-        scan_at(&engine(dir.path()), &sub).unwrap();
-        scan_at(&engine(dir.path()), &other_root()).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("data");
+        // Real directories: a missing root would also count as unused and change the order.
+        let tree = tmp.path().join("tree");
+        std::fs::create_dir_all(tree.join("sub")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("other")).unwrap();
+        let r = tree.to_string_lossy().into_owned();
+        let sub = tree.join("sub").to_string_lossy().into_owned();
+        let other = tmp.path().join("other").to_string_lossy().into_owned();
+        scan_at(&engine(&dir), &sub).unwrap();
+        scan_at(&engine(&dir), &other).unwrap();
         let capped = Engine::new(EngineConfig {
-            data_dir: dir.path().to_path_buf(),
+            data_dir: dir.clone(),
             max_data: Some("1".into()),
             ..Default::default()
         });
         let out = scan_at(&capped, &r).unwrap();
-        assert_eq!(out.summary.evicted, [sub, other_root()]);
+        assert_eq!(out.summary.evicted, [sub, other]);
         let left = capped.store().list();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].meta.root, r);
 
         let bad = Engine::new(EngineConfig {
-            data_dir: dir.path().to_path_buf(),
+            data_dir: dir,
             max_data: Some("2 gigs".into()),
             ..Default::default()
         });
