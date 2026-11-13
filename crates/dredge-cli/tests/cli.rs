@@ -282,6 +282,34 @@ fn doctor_reports_empty_store_corrupt_snapshot_and_missing_focus_root() {
 }
 
 #[test]
+fn doctor_reports_the_files_own_snapshot_version() {
+    let f = Fixture::new();
+    fs::create_dir_all(&f.data).unwrap();
+    let mut bytes = b"DREDGE\0\x01".to_vec();
+    bytes.extend_from_slice(&99u32.to_le_bytes());
+    fs::write(f.data.join("future.dredge"), bytes).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_dredge"))
+        .args(["doctor"])
+        .env("DREDGE_DATA_DIR", &f.data)
+        .env_remove("DREDGE_FOCUS_ROOTS")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rows = v["records"].as_array().unwrap();
+    let header = rows
+        .iter()
+        .find(|r| r["check"] == "snapshot_header:future.dredge")
+        .unwrap();
+    assert_eq!(header["status"], "warn");
+    assert!(header["message"].as_str().unwrap().contains("version 99"));
+    let fmt = rows
+        .iter()
+        .find(|r| r["check"] == "snapshot_format")
+        .unwrap();
+    assert_eq!(fmt["status"], "warn");
+}
+
+#[test]
 fn doctor_on_empty_data_directory_reports_zero_snapshots_without_creating_it() {
     let f = Fixture::new();
     let out = Command::new(env!("CARGO_BIN_EXE_dredge"))
@@ -527,6 +555,38 @@ fn mcp_categories_insights_and_doctor_are_byte_identical_to_the_cli() {
     }
     let v: Value = serde_json::from_str(&mcp[0]).unwrap();
     assert_eq!(v["kind"], "categories");
+}
+
+#[cfg(unix)]
+#[test]
+fn bar_never_emits_control_bytes_from_file_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("evil\x1b]0;pwn\x07dir\u{202e}");
+    let nm = root.join("node_modules");
+    fs::create_dir_all(&nm).unwrap();
+    fs::write(root.join("package-lock.json"), b"{}").unwrap();
+    fs::write(nm.join("blob.bin"), vec![9u8; 101 * MIB]).unwrap();
+    let data = tmp.path().join("data");
+    let root_s = root.to_string_lossy().into_owned();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_dredge"))
+            .args(args)
+            .env("DREDGE_DATA_DIR", &data)
+            .env_remove("DREDGE_FOCUS_ROOTS")
+            .output()
+            .unwrap()
+    };
+    assert!(run(&["scan", &root_s]).status.success());
+    let out = run(&["bar", &root_s, "--color", "never", "--width", "300"]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("Tip:"), "insight expected: {text}");
+    assert!(text.contains("\\u{1b}"), "{text}");
+    assert!(
+        text.bytes().all(|b| (b >= 0x20 && b != 0x7f) || b == b'\n'),
+        "control byte in {text:?}"
+    );
+    assert!(!text.contains('\u{202e}'));
 }
 
 #[test]

@@ -205,7 +205,7 @@ pub struct Segment {
 impl Segment {
     pub fn new(label: impl Into<String>, bytes: u64, ink: Ink) -> Segment {
         Segment {
-            label: label.into(),
+            label: sanitize(&label.into()),
             bytes,
             ink,
         }
@@ -546,6 +546,34 @@ pub fn render_bar(
 }
 
 // ---------------------------------------------------------------------------------------------
+// Sanitizing
+
+/// True for characters that must never reach a terminal as-is: Unicode `Cc` (C0, DEL, C1),
+/// line/paragraph separators and bidi override/isolate controls.
+pub fn is_unsafe_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// Replaces every unsafe character with a visible `\u{..}` escape (lowercase hex). All
+/// caller-supplied text (paths, labels, commands) goes through this before it is placed in a
+/// [`Line`], so the only escape bytes in the output are the renderer's own SGR sequences.
+pub fn sanitize(s: &str) -> String {
+    if !s.chars().any(is_unsafe_char) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        if is_unsafe_char(c) {
+            out.push_str(&format!("\\u{{{:x}}}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------
 // Legend
 
 const MINI_BAR: usize = 8;
@@ -577,11 +605,8 @@ pub fn render_legend(
         return Vec::new();
     }
     let total: u128 = segments.iter().map(|s| u128::from(s.bytes)).sum();
-    let lw = shown
-        .iter()
-        .map(|(_, s)| s.label.chars().count())
-        .max()
-        .unwrap_or(0);
+    let labels: Vec<String> = shown.iter().map(|(_, s)| sanitize(&s.label)).collect();
+    let lw = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
     let humans: Vec<String> = shown.iter().map(|(_, s)| human_bytes(s.bytes)).collect();
     let hw = humans.iter().map(|h| h.chars().count()).max().unwrap_or(0);
     let plain = caps.color == ColorTier::None;
@@ -589,9 +614,9 @@ pub fn render_legend(
     // (visible text, painted text)
     let entries: Vec<(String, String)> = shown
         .iter()
-        .zip(&humans)
-        .map(|((i, s), h)| {
-            let body = format!("{} {}", pad(&s.label, lw), lpad(h, hw));
+        .zip(humans.iter().zip(&labels))
+        .map(|((i, s), (h, label))| {
+            let body = format!("{} {}", pad(label, lw), lpad(h, hw));
             if plain {
                 let filled = ((u128::from(s.bytes) * MINI_BAR as u128 + total / 2) / total)
                     .clamp(1, MINI_BAR as u128) as usize;
@@ -661,6 +686,7 @@ fn truncate(s: &str, width: usize) -> String {
 
 /// Header (used of total), bar, legend grid and the top insight line.
 pub fn render_report(report: &Report, width: usize, focus: Option<usize>, caps: Caps) -> Vec<Line> {
+    let title = sanitize(&report.title);
     let mut stats = human_bytes(report.used_bytes);
     if let Some(total) = report.total_bytes.filter(|t| *t > 0) {
         let pct = report.used_bytes as f64 / total as f64 * 100.0;
@@ -670,11 +696,10 @@ pub fn render_report(report: &Report, width: usize, focus: Option<usize>, caps: 
     // characters can therefore occupy a different number of cells on screen.
     let suffix = format!("  {stats}");
     let title_width = width.saturating_sub(suffix.chars().count());
-    let header = if report.title.chars().count() + suffix.chars().count() <= width {
-        format!("{}{suffix}", report.title)
+    let header = if title.chars().count() + suffix.chars().count() <= width {
+        format!("{title}{suffix}")
     } else if title_width >= 4 {
-        let tail: String = report
-            .title
+        let tail: String = title
             .chars()
             .rev()
             .take(title_width - 1)
@@ -684,8 +709,7 @@ pub fn render_report(report: &Report, width: usize, focus: Option<usize>, caps: 
             .collect();
         format!("…{tail}{suffix}")
     } else {
-        let tail: String = report
-            .title
+        let tail: String = title
             .chars()
             .rev()
             .take(width.saturating_sub(1))
@@ -708,7 +732,7 @@ pub fn render_report(report: &Report, width: usize, focus: Option<usize>, caps: 
     }
     if let Some(tip) = &report.insight {
         out.push(Line(String::new()));
-        out.push(Line(truncate(&format!("Tip: {tip}"), width)));
+        out.push(Line(truncate(&format!("Tip: {}", sanitize(tip)), width)));
     }
     out
 }
@@ -891,6 +915,90 @@ mod tests {
             BAYER,
             [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
         );
+    }
+
+    #[test]
+    fn sanitize_escapes_controls_and_bidi() {
+        assert_eq!(sanitize("a\x1bb"), "a\\u{1b}b");
+        assert_eq!(sanitize("\u{202e}x\u{85}"), "\\u{202e}x\\u{85}");
+        assert_eq!(sanitize("café 名前"), "café 名前");
+    }
+
+    const NASTY: &str = "a\x1b[31m\x07b\rc\0d\x7fe\tf\ng\u{202e}h\u{2028}i";
+
+    fn assert_clean(lines: &[Line], sgr_ok: bool) {
+        for l in lines {
+            let mut rest = l.0.as_str();
+            let mut cleaned = String::new();
+            while let Some(i) = rest.find("\x1b[") {
+                cleaned.push_str(&rest[..i]);
+                assert!(sgr_ok, "escape in plain output: {:?}", l.0);
+                let after = &rest[i + 2..];
+                let end = after.find('m').expect("unterminated SGR");
+                assert!(
+                    after[..end].chars().all(|c| c.is_ascii_digit() || c == ';'),
+                    "non-SGR escape: {:?}",
+                    l.0
+                );
+                rest = &after[end + 1..];
+            }
+            cleaned.push_str(rest);
+            assert!(
+                cleaned.chars().all(|c| !is_unsafe_char(c)),
+                "unsafe char in {:?}",
+                l.0
+            );
+            assert!(!l.0.contains('\n'));
+        }
+    }
+
+    #[test]
+    fn caller_text_is_sanitized_in_every_tier() {
+        for color in [
+            ColorTier::None,
+            ColorTier::Ansi16,
+            ColorTier::Ansi256,
+            ColorTier::TrueColor,
+        ] {
+            let caps = Caps {
+                color,
+                glyphs: Glyphs::HalfBlock,
+            };
+            let mut segments = segs();
+            segments[0].label = NASTY.into(); // pub field set directly
+            let rep = Report {
+                title: format!("/p/{NASTY}"),
+                used_bytes: 100,
+                total_bytes: Some(1000),
+                segments,
+                insight: Some(format!("rm -rf '{NASTY}'")),
+            };
+            for width in [20, 60, 200] {
+                let lines = render_report(&rep, width, Some(0), caps);
+                assert_clean(&lines, color != ColorTier::None);
+                for l in &lines {
+                    if color == ColorTier::None {
+                        assert!(l.0.bytes().all(|b| b >= 0x20 && b != 0x7f), "{:?}", l.0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn widths_use_sanitized_text() {
+        let rep = Report {
+            title: "\x1b\x07".into(),
+            used_bytes: 1,
+            total_bytes: None,
+            segments: vec![],
+            insight: Some("\x1b".repeat(50)),
+        };
+        for width in 0..40 {
+            for l in render_report(&rep, width, None, Caps::PLAIN) {
+                assert!(l.0.chars().count() <= width, "{width}: {:?}", l.0);
+            }
+        }
     }
 
     #[test]

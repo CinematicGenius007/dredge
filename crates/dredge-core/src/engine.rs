@@ -504,22 +504,40 @@ impl Engine {
             message: format!("{} snapshot file(s) found", paths.len()),
             hint: None,
         });
+        let mut unsupported = Vec::new();
         for p in &paths {
             let key = p
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            match crate::snapshot::read_header(p) {
-                Ok(_meta) => records.push(DoctorRecord {
-                    check: format!("snapshot_header:{key}"),
-                    status: "ok",
-                    message: format!(
-                        "header parses; snapshot format version {}",
-                        crate::snapshot::FORMAT_VERSION
-                    ),
-                    hint: None,
-                }),
+            let supported = crate::snapshot::FORMAT_VERSION;
+            match crate::snapshot::read_version(p) {
+                Ok(v) if v != supported => {
+                    unsupported.push(key.clone());
+                    records.push(DoctorRecord {
+                        check: format!("snapshot_header:{key}"),
+                        status: "warn",
+                        message: format!(
+                            "snapshot format version {v} is not supported (this build reads version {supported})"
+                        ),
+                        hint: Some("Rescan this root to replace the snapshot.".into()),
+                    });
+                }
+                Ok(v) => match crate::snapshot::read_header(p) {
+                    Ok(_) => records.push(DoctorRecord {
+                        check: format!("snapshot_header:{key}"),
+                        status: "ok",
+                        message: format!("header parses; snapshot format version {v}"),
+                        hint: None,
+                    }),
+                    Err(e) => records.push(DoctorRecord {
+                        check: format!("snapshot_header:{key}"),
+                        status: "warn",
+                        message: format!("corrupt or unreadable snapshot: {e}"),
+                        hint: Some("Rescan this root to replace the snapshot.".into()),
+                    }),
+                },
                 Err(e) => records.push(DoctorRecord {
                     check: format!("snapshot_header:{key}"),
                     status: "warn",
@@ -530,12 +548,20 @@ impl Engine {
         }
         records.push(DoctorRecord {
             check: "snapshot_format".into(),
-            status: "ok",
-            message: format!(
-                "supported snapshot format version {}",
-                crate::snapshot::FORMAT_VERSION
-            ),
-            hint: None,
+            status: if unsupported.is_empty() { "ok" } else { "warn" },
+            message: if unsupported.is_empty() {
+                format!(
+                    "supported snapshot format version {}",
+                    crate::snapshot::FORMAT_VERSION
+                )
+            } else {
+                format!(
+                    "{} snapshot file(s) have an unsupported format version (supported: {})",
+                    unsupported.len(),
+                    crate::snapshot::FORMAT_VERSION
+                )
+            },
+            hint: (!unsupported.is_empty()).then(|| "Rescan the affected roots.".into()),
         });
 
         let data_path = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());

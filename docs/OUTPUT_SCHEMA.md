@@ -6,8 +6,13 @@ generated from the same Rust types the commands return. This file is the human g
 ## Conventions
 
 - stdout is **exactly one JSON document**. Diagnostics and progress go to stderr.
-  Exception: `dredge bar` (and later `dredge tui`) are presentation commands. They print text,
-  not an envelope, have no schema, and report errors on stderr with a nonzero exit.
+  Exception: `dredge bar` and `dredge tui` are presentation commands. They print text,
+  not an envelope, have no schema, and report errors on stderr with a nonzero exit. They never
+  pass file-derived text (paths, labels, suggested commands) to the terminal raw: every control
+  character (Unicode `Cc`, U+2028/2029, bidi controls U+202A-202E and U+2066-2069) is shown as a
+  visible escape such as `\u{1b}`, so the only escape bytes in their output are the renderer's
+  own color sequences, and none at all with `--color never`. The TUI copies a suggested command
+  verbatim, but refuses to copy one that contains control characters.
 - Compact by default; `--pretty` indents. MCP tools always return compact JSON.
 - Nonzero exit on failure, and stdout then carries a `kind: "error"` document.
 - All sizes are bytes (JSON numbers). **Allocated** = space on disk, the number to
@@ -247,7 +252,9 @@ The rows of all categories (not only those shown) sum exactly to `summary.alloca
 
 How a node gets its category: a static rule table in `crates/dredge-core/src/categories.rs`,
 matched on names and path components only (no file is opened). The first matching rule wins;
-path and directory rules come before extension rules. A directory matched by a rule claims its
+path and directory rules come before extension rules. Extension rules match files only; a
+directory matches an extension only for real bundle types (`.app`, `.photoslibrary`). `target`
+is `developer` only when a `Cargo.toml` file sits beside it. A directory matched by a rule claims its
 whole subtree (`node_modules/x.jpg` is `developer`). Rules for another OS never apply. Anything
 unmatched, and a mixed directory's own bytes, is `other`.
 
@@ -383,6 +390,7 @@ descriptions carry what an agent needs.
 | `disk_types` | `path`, `limit` (default 10) |
 | `disk_categories` | `path`, `limit` (default 10) |
 | `disk_insights` | `path`, `limit` (default 10) |
+| `disk_doctor` | none |
 | `disk_detail` | `path` |
 
 Each tool returns the corresponding envelope as one compact JSON text block. `verbose`
@@ -402,10 +410,13 @@ changing a unit, bumps `schema_version`.
 Version 2 added the `categories` and `insights` kinds and the `category` row field. Nothing
 from version 1 was removed or renamed; the bump marks the new kinds.
 
+Version 3 added the `doctor` kind (and the `disk_doctor` MCP tool). Nothing from version 2
+was removed or renamed.
+
 
 ## Doctor
 
-`dredge doctor` reports read-only environment checks in `records`; it exits successfully even when a check warns or fails. Each record has `check`, `status` (`ok`, `warn`, or `fail`), `message`, and optional `hint`. Checks include data-directory presence and permission metadata, snapshot count and header validity, supported snapshot format, available space on the data-directory volume, configured focus-root existence and snapshot coverage/age, and on macOS a best-effort Full Disk Access hint. The command does not change permissions or write probe files.
+`dredge doctor` reports read-only environment checks in `records`; it exits successfully even when a check warns. Each record has `check`, `status` (`ok` or `warn`; `fail` is reserved and not emitted yet, so consumers should still tolerate it), `message`, and optional `hint`. Checks include data-directory presence and permission metadata, snapshot count and header validity (each file's own format version is reported, and an unsupported version warns), supported snapshot format, available space on the data-directory volume, configured focus-root existence and snapshot coverage/age, and on macOS a best-effort Full Disk Access hint. The command does not change permissions or write probe files.
 
 ```json
 { "schema_version": 3, "kind": "doctor", "records": [

@@ -24,11 +24,13 @@ jobs:
             archive: tar.gz
             binary: dredge
           - target: x86_64-apple-darwin
-            os: macos-13
+            # Intel macOS runners are retired; cross-compile from the Apple Silicon runner.
+            os: macos-14
             archive: tar.gz
             binary: dredge
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            # Oldest hosted Ubuntu image, so the binary's glibc floor is as low as practical.
+            os: ubuntu-22.04
             archive: tar.gz
             binary: dredge
     steps:
@@ -41,7 +43,9 @@ jobs:
         shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PACKAGE_VERSION="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dredge-cli"))')"
+          # `cargo pkgid` ends in `#dredge-cli@X.Y.Z` (newer cargo) or `#X.Y.Z` (older); no extra tools needed.
+          PKGID="$(cargo pkgid -p dredge-cli --locked)"
+          PACKAGE_VERSION="${PKGID##*[#@]}"
           test "$TAG_VERSION" = "$PACKAGE_VERSION" || { echo "tag v$TAG_VERSION does not match dredge-cli $PACKAGE_VERSION" >&2; exit 1; }
       - run: cargo build --release -p dredge-cli --locked --target ${{ matrix.target }}
       - name: Package Windows archive
@@ -60,15 +64,6 @@ jobs:
           cp target/${{ matrix.target }}/release/${{ matrix.binary }} stage/
           cp LICENSE README.md stage/
           tar -czf dredge-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz -C stage .
-      - name: Create checksum file
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import hashlib, glob
-          from pathlib import Path
-          archive = Path((glob.glob('dredge-*.zip') + glob.glob('dredge-*.tar.gz'))[0])
-          Path('SHA256SUMS').write_text(f'{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n')
-          PY
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}

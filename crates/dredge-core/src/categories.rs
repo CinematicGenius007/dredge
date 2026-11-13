@@ -71,9 +71,15 @@ pub fn host_os() -> Os {
 /// How a rule recognizes a node. Only files and directories match; links never do.
 /// Names compare case-insensitively (ASCII) when the snapshot's filesystem is; extensions always.
 pub enum Matcher {
-    /// A file, or a directory such as a macOS bundle or package (`Foo.app`, `x.photoslibrary`),
-    /// whose extension (after the last dot, not a leading dot) is one of these.
+    /// A file whose extension (after the last dot, not a leading dot) is one of these.
+    /// Directories never match: `com.apple.iWork.Pages` is a folder, not a document.
     Extension(&'static [&'static str]),
+    /// Like `Extension`, but a directory with the extension matches too. Only for real bundle
+    /// types (`Foo.app`, `x.photoslibrary`), each listed with its source.
+    Bundle(&'static [&'static str]),
+    /// A directory with this name that has a sibling file with the second name (a Cargo
+    /// `target` next to `Cargo.toml`).
+    DirBeside(&'static str, &'static str),
     /// A directory with exactly this name, anywhere.
     DirName(&'static str),
     /// A node whose last path components are these. `*` matches any one component.
@@ -124,7 +130,7 @@ pub static RULES: &[Rule] = &[
     // https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html
     rule(
         Developer,
-        DirName("target"),
+        DirBeside("target", "Cargo.toml"),
         Os::Any,
         "https://doc.rust-lang.org/cargo/reference/build-cache.html",
     ),
@@ -295,18 +301,32 @@ pub static RULES: &[Rule] = &[
         Os::Windows,
         "https://learn.microsoft.com/troubleshoot/windows-client/deployment/disable-and-re-enable-hibernation",
     ),
-    // Extension rules. A directory with one of these extensions is a bundle or package.
-    // https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html
+    // Extension rules match files only. Directories match only through `Bundle`, which lists
+    // real bundle types.
+    // `.app`: https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html
+    rule(
+        Apps,
+        Bundle(&["app"]),
+        Os::Any,
+        "https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html",
+    ),
     // https://learn.microsoft.com/windows/win32/msi/windows-installer-file-extensions
     rule(
         Apps,
-        Extension(&["app", "dmg", "pkg", "exe", "msi", "apk"]),
+        Extension(&["dmg", "pkg", "exe", "msi", "apk"]),
         Os::Any,
         "https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html",
     ),
     // https://www.iana.org/assignments/media-types/media-types.xhtml#image plus camera raw
     // formats (https://helpx.adobe.com/camera-raw/kb/camera-raw-plug-supported-cameras.html)
     // and the macOS Photos library package.
+    // `.photoslibrary` is a bundle: https://support.apple.com/guide/photos/welcome/mac
+    rule(
+        Photos,
+        Bundle(&["photoslibrary"]),
+        Os::Any,
+        "https://support.apple.com/guide/photos/welcome/mac",
+    ),
     rule(
         Photos,
         Extension(&[
@@ -325,7 +345,6 @@ pub static RULES: &[Rule] = &[
             "cr3",
             "nef",
             "arw",
-            "photoslibrary",
         ]),
         Os::Any,
         "https://www.iana.org/assignments/media-types/media-types.xhtml#image",
@@ -349,7 +368,7 @@ pub static RULES: &[Rule] = &[
         Documents,
         Extension(&[
             "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "txt",
-            "md", "epub", "pages", "numbers", "key",
+            "md", "epub", "pages", "numbers",
         ]),
         Os::Any,
         "https://www.iana.org/assignments/media-types/media-types.xhtml#application",
@@ -697,16 +716,29 @@ impl<'a> Walker<'a> {
         })
     }
 
+    fn ext_in(&self, i: u32, list: &[&str]) -> bool {
+        self.component(i, 0)
+            .and_then(ext_of)
+            .is_some_and(|e| list.iter().any(|x| x.eq_ignore_ascii_case(e)))
+    }
+
     fn matches(&self, m: &Matcher, i: u32) -> bool {
         let kind = self.idx.kind(i);
         if !matches!(kind, Kind::File | Kind::Dir) {
             return false;
         }
         match m {
-            Extension(list) => self
-                .component(i, 0)
-                .and_then(ext_of)
-                .is_some_and(|e| list.iter().any(|x| x.eq_ignore_ascii_case(e))),
+            Extension(list) => kind == Kind::File && self.ext_in(i, list),
+            Bundle(list) => self.ext_in(i, list),
+            DirBeside(n, sibling) => {
+                kind == Kind::Dir
+                    && i != 0
+                    && self.component(i, 0).is_some_and(|c| name_eq(c, n, self.ci))
+                    && self.idx.children(self.idx.parent(i)).any(|s| {
+                        self.idx.kind(s) == Kind::File
+                            && name_eq(self.idx.name(s), sibling, self.ci)
+                    })
+            }
             DirName(n) => {
                 kind == Kind::Dir && self.component(i, 0).is_some_and(|c| name_eq(c, n, self.ci))
             }
@@ -1280,11 +1312,11 @@ mod tests {
     fn extension_rules_come_last_and_bundles_claim_their_subtree() {
         let first_ext = RULES
             .iter()
-            .position(|r| matches!(r.matcher, Extension(_)))
+            .position(|r| matches!(r.matcher, Extension(_) | Bundle(_)))
             .unwrap();
         assert!(RULES[first_ext..]
             .iter()
-            .all(|r| matches!(r.matcher, Extension(_))));
+            .all(|r| matches!(r.matcher, Extension(_) | Bundle(_))));
         let idx = build("/Users/u", true, |b| {
             let app = dirs(b, 0, "Tools/Foo.app/Contents");
             b.add(app, RawEntry::file("icon.png", 10));
@@ -1300,6 +1332,45 @@ mod tests {
             c.category(node(&idx, "proj/node_modules/x.app")),
             Some(Developer)
         );
+    }
+
+    #[test]
+    fn extension_rules_skip_directories_except_bundles() {
+        let idx = build("/Users/u", true, |b| {
+            let d = dirs(b, 0, "Library/Containers/com.apple.iWork.Pages");
+            b.add(d, RawEntry::file("blob", 10));
+            let d = dirs(b, 0, "stuff/notes.pdf");
+            b.add(d, RawEntry::file("blob", 10));
+            b.add(0, RawEntry::file("tls.key", 10));
+            b.add(0, RawEntry::file("doc.pdf", 10));
+            let d = dirs(b, 0, "Pictures/Photos Library.photoslibrary");
+            b.add(d, RawEntry::file("blob", 10));
+        });
+        let c = classify(&idx, Os::Macos);
+        let cat = |p: &str| c.category(node(&idx, p));
+        assert_ne!(
+            cat("Library/Containers/com.apple.iWork.Pages"),
+            Some(Documents)
+        );
+        assert_ne!(cat("stuff/notes.pdf"), Some(Documents));
+        assert_eq!(cat("tls.key"), Some(Other));
+        assert_eq!(cat("doc.pdf"), Some(Documents));
+        assert_eq!(cat("Pictures/Photos Library.photoslibrary"), Some(Photos));
+    }
+
+    #[test]
+    fn target_is_developer_only_beside_cargo_toml() {
+        let idx = build("/Users/u", true, |b| {
+            let p = dirs(b, 0, "rs");
+            b.add(p, RawEntry::file("Cargo.toml", 10));
+            let t = dirs(b, p, "target");
+            b.add(t, RawEntry::file("x", 10));
+            let q = dirs(b, 0, "misc/target");
+            b.add(q, RawEntry::file("y", 10));
+        });
+        let c = classify(&idx, Os::Macos);
+        assert_eq!(c.category(node(&idx, "rs/target")), Some(Developer));
+        assert_ne!(c.category(node(&idx, "misc/target")), Some(Developer));
     }
 
     #[test]

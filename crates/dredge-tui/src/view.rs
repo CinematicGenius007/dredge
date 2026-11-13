@@ -97,9 +97,13 @@ pub fn draw(f: &mut Frame, s: &State, theme: Theme) {
 }
 
 // ---------------------------------------------------------------------------------------------
+pub const CONTROL_MARKER: &str = "(contains control characters)";
+
 // Text helpers (widths count Unicode scalar values, like dredge-render)
 
 fn fit(s: &str, width: usize) -> String {
+    let owned = dredge_render::sanitize(s);
+    let s = owned.as_str();
     if UnicodeWidthStr::width(s) <= width {
         return s.to_string();
     }
@@ -121,6 +125,8 @@ fn fit(s: &str, width: usize) -> String {
 }
 
 fn fit_tail(s: &str, width: usize) -> String {
+    let owned = dredge_render::sanitize(s);
+    let s = owned.as_str();
     if UnicodeWidthStr::width(s) <= width {
         return s.to_string();
     }
@@ -163,9 +169,25 @@ pub fn fmt_age(secs: u64) -> String {
     }
 }
 
+/// Last line of defense: no control character from file-derived text reaches the terminal.
+fn clean(mut line: Line<'_>) -> Line<'static> {
+    for span in &mut line.spans {
+        span.content = dredge_render::sanitize(&span.content).into();
+    }
+    Line {
+        spans: line
+            .spans
+            .into_iter()
+            .map(|sp| Span::styled(sp.content.into_owned(), sp.style))
+            .collect(),
+        style: line.style,
+        alignment: line.alignment,
+    }
+}
+
 fn put(buf: &mut Buffer, rect: Rect, row: usize, line: Line) {
     if row < usize::from(rect.height) {
-        buf.set_line(rect.x, rect.y + row as u16, &line, rect.width);
+        buf.set_line(rect.x, rect.y + row as u16, &clean(line), rect.width);
     }
 }
 
@@ -205,7 +227,7 @@ fn header(buf: &mut Buffer, s: &State, w: u16) {
             if scan.is_empty() { Style::new() } else { DIM },
         ));
     }
-    buf.set_line(0, 0, &Line::from(spans), w as u16);
+    buf.set_line(0, 0, &clean(Line::from(spans)), w as u16);
 }
 
 fn hints(s: &State) -> &'static str {
@@ -532,6 +554,15 @@ fn browse(buf: &mut Buffer, s: &State, body: Rect) {
     }
 }
 
+/// The command as displayed: control characters made visible, with a marker when there were any.
+fn command_shown(cmd: &str) -> String {
+    if cmd.chars().any(dredge_render::is_unsafe_char) {
+        format!("{}  {CONTROL_MARKER}", dredge_render::sanitize(cmd))
+    } else {
+        cmd.to_string()
+    }
+}
+
 fn insight_lines(i: &Insight, selected: bool, w: usize) -> [Line<'static>; INSIGHT_LINES] {
     let mark = if selected { "\u{203a} " } else { "  " };
     let head = if selected { BOLD } else { Style::new() };
@@ -546,7 +577,10 @@ fn insight_lines(i: &Insight, selected: bool, w: usize) -> [Line<'static>; INSIG
         Line::styled(format!("  {}", fit_tail(&i.path, w.saturating_sub(2))), DIM),
         Line::from(vec![
             Span::raw("  $ "),
-            Span::raw(fit(&i.suggested_command, w.saturating_sub(4))),
+            Span::raw(fit(
+                &command_shown(&i.suggested_command),
+                w.saturating_sub(4),
+            )),
         ]),
     ]
 }
@@ -768,6 +802,28 @@ mod tests {
         }
         let t = text(&render(&loaded((10, 3)), Theme::TrueColor));
         assert!(t.contains("too small"), "{t}");
+    }
+
+    #[test]
+    fn insights_show_sanitized_command_with_marker() {
+        let mut s = loaded((100, 24));
+        s.view = crate::state::View::Insights;
+        s.insights = Some(vec![Insight {
+            human: "1 GiB".into(),
+            message: "m\x1b[2Jx".into(),
+            path: "/p\x07q".into(),
+            suggested_command: "rm -rf '/p\x1b]52;c;AA\x07'".into(),
+        }]);
+        let b = render(&s, Theme::TrueColor);
+        let t = text(&b);
+        assert!(t.contains(CONTROL_MARKER), "{t}");
+        assert!(t.contains("\\u{1b}"), "{t}");
+        for y in 0..b.area.height {
+            for x in 0..b.area.width {
+                let sym = b.cell((x, y)).unwrap().symbol();
+                assert!(sym.chars().all(|c| !c.is_control()), "{sym:?}");
+            }
+        }
     }
 
     #[test]

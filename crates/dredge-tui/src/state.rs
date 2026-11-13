@@ -450,6 +450,13 @@ fn copy_command(s: &mut State, fx: &mut Vec<Effect>) {
     match s.insights.as_ref().and_then(|l| l.get(s.insight_sel)) {
         Some(i) => {
             let cmd = i.suggested_command.clone();
+            if cmd.chars().any(dredge_render::is_unsafe_char) {
+                s.note(format!(
+                    "not copied: command contains control characters: {}",
+                    dredge_render::sanitize(&cmd)
+                ));
+                return;
+            }
             s.note(format!("copied (review before running): {cmd}"));
             fx.push(Effect::CopyText(cmd));
         }
@@ -787,6 +794,19 @@ mod tests {
         assert_eq!(s.view, View::Paths);
         let s = keys(s, &[Key::Char('i'), Key::Char('i')]);
         assert_eq!(s.view, View::Paths);
+    }
+
+    #[test]
+    fn y_refuses_commands_with_control_characters() {
+        let mut list = insights();
+        list[0].suggested_command = "rm -rf '/p\x1b]52;c;AAAA\x07'".into();
+        let (s, _) = press(loaded(), Key::Char('i'));
+        let (s, _) = update(s, Event::Insights(Ok(list)));
+        let (s, fx) = press(s, Key::Char('y'));
+        assert!(fx.is_empty(), "{fx:?}");
+        let text = &s.status.as_ref().unwrap().text;
+        assert!(text.contains("not copied"), "{text}");
+        assert!(text.chars().all(|c| !c.is_control()), "{text:?}");
     }
 
     #[test]
