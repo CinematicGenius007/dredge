@@ -48,11 +48,7 @@ impl Scanner for WalkScanner {
             progress,
             pctx: PlatformCtx { root_dev },
         };
-        let threads = opts
-            .threads
-            .or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
-            .unwrap_or(4)
-            .max(1);
+        let threads = opts.threads.unwrap_or_else(default_threads).max(1);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .build()
@@ -135,3 +131,16 @@ fn scan_dir<'scope>(
         scope.spawn(move |s| scan_dir(s, ctx, p, cid));
     }
 }
+
+/// Logical cores, capped on macOS: on APFS directory listing serializes in the kernel past
+/// about four workers, so more threads only add system time (docs/BENCHMARKS.md).
+pub fn default_threads() -> usize {
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    if cfg!(target_os = "macos") {
+        cores.min(MACOS_THREAD_CAP)
+    } else {
+        cores
+    }
+}
+
+const MACOS_THREAD_CAP: usize = 4;
