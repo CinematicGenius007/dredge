@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "dredge-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "dredge-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "jiff",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "dredge-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dredge-core",
  "dredge-scan",
@@ -504,14 +504,14 @@ dependencies = [
 
 [[package]]
 name = "dredge-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dredge-core",
 ]
 
 [[package]]
 name = "dredge-scan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dredge-core",
  "libc",
@@ -522,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "dredge-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm",
  "dredge-core",
