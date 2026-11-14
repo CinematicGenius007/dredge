@@ -59,6 +59,9 @@ go in the frontends (AGENTS.md, first rule).
 4. Add the CLI subcommand in `crates/dredge-cli/src/main.rs`. It parses arguments, calls
    `engine.run`, and prints.
 5. Add the MCP tool in `crates/dredge-mcp/src/server.rs`. It translates arguments only.
+   Add the human view in `crates/dredge-render/src/human.rs` following [docs/UX.md](docs/UX.md)
+   (lead, table, age, Next), a row in its coverage table, and a case in
+   `crates/dredge-render/tests/human_every_command.rs`.
 6. Document the new kind and fields in `docs/OUTPUT_SCHEMA.md`, in the same commit. Changing an
    existing field is a `schema_version` change; say in the RFC whether the version moves.
 7. Add tests with fixture trees in `tempfile`. Assert relationships, not exact sizes. Add a

@@ -5,7 +5,9 @@ generated from the same Rust types the commands return. This file is the human g
 
 ## Conventions
 
-- stdout is **exactly one JSON document**. Diagnostics and progress go to stderr.
+- When stdout is not a terminal, or with `--json` or `--pretty`, stdout is **exactly one JSON
+  document**. On a terminal, data commands print a human view instead ([UX.md](UX.md), RFC 0003);
+  it is not a contract and must not be parsed. Diagnostics and progress go to stderr.
   Exception: `dredge bar` and `dredge tui` are presentation commands. They print text,
   not an envelope, have no schema, and report errors on stderr with a nonzero exit. They never
   pass file-derived text (paths, labels, suggested commands) to the terminal raw: every control
@@ -14,7 +16,8 @@ generated from the same Rust types the commands return. This file is the human g
   own color sequences, and none at all with `--color never`. The TUI copies a suggested command
   verbatim, but refuses to copy one that contains control characters.
 - Compact by default; `--pretty` indents. MCP tools always return compact JSON.
-- Nonzero exit on failure, and stdout then carries a `kind: "error"` document.
+- Nonzero exit on failure, and stdout then carries a `kind: "error"` document (in the human
+  view, `✗` and a fix on stderr).
 - All sizes are bytes (JSON numbers). **Allocated** = space on disk, the number to
   reason about. **Logical** = file length as apps see it.
 - `human` = allocated bytes in binary units, one decimal (`"1.2 GiB"`).

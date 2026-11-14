@@ -1,5 +1,6 @@
 //! `dredge`: thin CLI over `dredge-core`. Every data command prints one JSON document on
-//! stdout; progress and error text go to stderr. `bar` and `tui` are presentation commands:
+//! stdout when stdout is not a terminal (or with `--json`/`--pretty`), and a readable view
+//! (RFC 0003, docs/UX.md) when it is; progress and error text go to stderr. `bar` and `tui` are presentation commands:
 //! `bar` prints text and `tui` draws on the terminal (errors still go to stderr with a nonzero
 //! exit).
 
@@ -20,10 +21,15 @@ use dredge_scan::WalkScanner;
 #[command(
     name = "dredge",
     version,
-    about = "Find what is using your disk space. Output is JSON."
+    about = "Find what is using your disk space.",
+    long_about = "Find what is using your disk space.\n\nOn a terminal, commands print a readable view. \
+Piped, redirected, or with --json, they print one JSON document (see `dredge schema`)."
 )]
 struct Cli {
-    /// Indent the JSON output.
+    /// Print JSON even on a terminal (always JSON when piped).
+    #[arg(long, global = true)]
+    json: bool,
+    /// Print indented JSON.
     #[arg(long, global = true)]
     pretty: bool,
     /// Include every extra field on each row.
@@ -115,7 +121,7 @@ enum Command {
     /// Print a dithered space-by-category bar as text (not JSON).
     Bar {
         path: String,
-        /// Bar width in cells (default: $COLUMNS, else 80).
+        /// Bar width in cells (default: $COLUMNS, else the terminal width, else 80).
         #[arg(long)]
         width: Option<usize>,
         /// Use color: `auto` only on a terminal and without NO_COLOR.
@@ -206,6 +212,71 @@ fn detect_caps(mode: ColorMode, glyphs: GlyphMode) -> Caps {
     Caps { color, glyphs }
 }
 
+/// Terminal width: `$COLUMNS`, else the size the terminal reports, else 80.
+fn term_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|c| c.trim().parse().ok())
+        .or_else(|| {
+            crossterm::terminal::size()
+                .ok()
+                .map(|(w, _)| usize::from(w))
+        })
+        .filter(|w| *w > 0)
+        .unwrap_or(80)
+}
+
+/// The human view's style for a stream: color only on a terminal and without `NO_COLOR`.
+fn human_style(is_tty: bool) -> dredge_render::human::Style {
+    let env = |k: &str| std::env::var(k).ok();
+    let color = resolve_color(
+        ColorMode::Auto,
+        std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()),
+        is_tty,
+        env("COLORTERM").as_deref(),
+        env("TERM").as_deref(),
+    );
+    let glyphs = if env("TERM").as_deref() == Some("dumb") {
+        Glyphs::Ascii
+    } else {
+        Glyphs::HalfBlock
+    };
+    dredge_render::human::Style {
+        caps: Caps { color, glyphs },
+        width: term_width(),
+        home: dirs_home(),
+    }
+}
+
+fn dirs_home() -> Option<String> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(|h| h.to_string_lossy().into_owned())
+        .filter(|h| !h.is_empty())
+}
+
+/// Human mode: the view on stdout, errors as `✗ message` and `fix hint` on stderr.
+fn emit_human(out: &Output, first: bool) {
+    if let Output::Error(e) = out {
+        let st = human_style(std::io::stderr().is_terminal());
+        let mut stderr = std::io::stderr().lock();
+        for line in dredge_render::human::render_error(&e.error, &st) {
+            let _ = writeln!(stderr, "{line}");
+        }
+        return;
+    }
+    let st = human_style(true);
+    let mut stdout = std::io::stdout().lock();
+    if !first {
+        let _ = writeln!(stdout);
+    }
+    for line in dredge_render::human::render_human(out, &st) {
+        // A closed pipe is not an error worth reporting.
+        if writeln!(stdout, "{line}").is_err() {
+            break;
+        }
+    }
+}
+
 fn bar_error(msg: impl std::fmt::Display) -> ExitCode {
     eprintln!("dredge: {msg}");
     ExitCode::from(1)
@@ -287,10 +358,7 @@ fn run_bar(
         }
         found
     });
-    let width = width
-        .or_else(|| std::env::var("COLUMNS").ok()?.trim().parse().ok())
-        .filter(|w| *w > 0)
-        .unwrap_or(80);
+    let width = width.filter(|w| *w > 0).unwrap_or_else(term_width);
     let caps = detect_caps(mode, glyphs);
     let mut stdout = std::io::stdout().lock();
     for line in dredge_render::render_report(&report, width, focus, caps) {
@@ -380,7 +448,7 @@ fn scan_one(engine: &Engine, path: &str, threads: Option<usize>, show_progress: 
                 while !done.load(Ordering::Relaxed) {
                     let p = progress.snapshot();
                     eprint!(
-                        "\rscanning {path}: {} files, {} dirs, {}   ",
+                        "\rscanning {path}  {} files · {} folders · {}   ",
                         p.files,
                         p.dirs,
                         human_bytes(p.allocated_bytes)
@@ -491,10 +559,16 @@ fn main() -> ExitCode {
         }
     };
 
+    // Rule 7 (docs/UX.md): anything but a terminal gets the JSON, byte for byte.
+    let human = !cli.json && !cli.pretty && std::io::stdout().is_terminal();
     let mut failed = false;
-    for o in &outputs {
+    for (i, o) in outputs.iter().enumerate() {
         failed |= o.is_error();
-        emit(o, cli.pretty);
+        if human {
+            emit_human(o, i == 0);
+        } else {
+            emit(o, cli.pretty);
+        }
     }
     if failed {
         ExitCode::from(1)

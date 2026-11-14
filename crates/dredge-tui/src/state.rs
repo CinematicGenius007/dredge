@@ -33,6 +33,8 @@ pub struct Cat {
     pub share: f64,
     pub files: u64,
     pub top: Vec<String>,
+    /// Allocated bytes of each `top` path, in the same order (0 when unknown).
+    pub top_bytes: Vec<u64>,
 }
 
 /// Everything the category view shows, from `Engine::categories` and `Engine::run(Volumes)`.
@@ -43,6 +45,9 @@ pub struct Overview {
     pub used_human: String,
     pub total_bytes: Option<u64>,
     pub free_bytes: Option<u64>,
+    /// Volume label and file system, when the root is a mount point.
+    pub label: Option<String>,
+    pub fs: Option<String>,
     pub age_secs: u64,
     /// Non-empty categories only, largest first.
     pub cats: Vec<Cat>,
@@ -82,6 +87,13 @@ pub struct Progress {
     pub files: u64,
     pub dirs: u64,
     pub bytes: u64,
+    /// Folders that could not be read so far.
+    pub errors: u64,
+    pub elapsed_ms: u64,
+    pub threads: usize,
+    /// What the scan should reach: the volume's used bytes when the root is a mount point.
+    /// `None` means no honest percentage exists, so none is shown.
+    pub expected_bytes: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,6 +130,8 @@ pub enum Effect {
     Browse(String),
     Insights,
     Scan,
+    /// Stop the running scan. The previous snapshot is kept.
+    CancelScan,
     /// Text for the clipboard (OSC 52). It is only ever copied, never run.
     CopyText(String),
     Quit,
@@ -389,7 +403,7 @@ fn is_nav(key: Key) -> bool {
     )
 }
 
-fn fmt_count(n: u64) -> String {
+pub fn fmt_count(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
@@ -424,6 +438,10 @@ pub fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
             s.focus = s.focus.min(s.cats().len().saturating_sub(1));
             if s.overview.is_some() && s.status.as_ref().is_some_and(|st| st.error) {
                 s.status = None;
+            }
+            // The overview names the top cleanup hint, so fetch hints once it is on screen.
+            if s.overview.is_some() && s.insights.is_none() {
+                fx.push(Effect::Insights);
             }
         }
         Event::Overview(Err(e)) => {
@@ -475,7 +493,8 @@ pub fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
             s.err(e);
         }
         Event::Progress(p) => {
-            if s.scan != Scan::Running(p) {
+            // A late update after a cancel must not restart the scan screen.
+            if s.scanning() && s.scan != Scan::Running(p) {
                 s.scan = Scan::Running(p);
             }
         }
@@ -751,7 +770,11 @@ fn copy(s: &mut State, fx: &mut Vec<Effect>) {
 }
 
 fn copy_command(s: &mut State, fx: &mut Vec<Effect>) {
-    match s.insights.as_ref().and_then(|l| l.get(s.insight_sel)) {
+    copy_insight(s, s.insight_sel, fx);
+}
+
+fn copy_insight(s: &mut State, idx: usize, fx: &mut Vec<Effect>) {
+    match s.insights.as_ref().and_then(|l| l.get(idx)) {
         Some(i) => {
             let cmd = i.suggested_command.clone();
             if cmd.chars().any(dredge_render::is_unsafe_char) {
@@ -768,7 +791,26 @@ fn copy_command(s: &mut State, fx: &mut Vec<Effect>) {
     }
 }
 
+/// `c` on the overview: the command of the top cleanup hint, the one the overview shows.
+fn copy_top_command(s: &mut State, fx: &mut Vec<Effect>) {
+    match s.insights.as_deref() {
+        None if s.overview.is_none() => s.note("no snapshot yet: press r to scan"),
+        None => s.note("cleanup hints are still loading"),
+        Some([]) => s.note("no cleanup hints for this path"),
+        Some(_) => copy_insight(s, 0, fx),
+    }
+}
+
 fn overview_key(s: &mut State, k: Key, fx: &mut Vec<Effect>) {
+    if s.scanning() && k == Key::Esc {
+        s.scan = Scan::Idle;
+        s.note("scan cancelled; the last snapshot is unchanged");
+        fx.push(Effect::CancelScan);
+        return;
+    }
+    if k == Key::Char('c') {
+        return copy_top_command(s, fx);
+    }
     if k == Key::Char('b') {
         if s.overview.is_none() {
             s.note("no snapshot yet: press r to scan");
@@ -906,6 +948,7 @@ mod tests {
             share: 10.0,
             files: 3,
             top: top.iter().map(|s| s.to_string()).collect(),
+            top_bytes: top.iter().map(|_| bytes / 2).collect(),
         }
     }
 
@@ -916,6 +959,8 @@ mod tests {
             used_human: "600 B".into(),
             total_bytes: Some(1000),
             free_bytes: Some(400),
+            label: None,
+            fs: None,
             age_secs: 90,
             cats: vec![
                 cat(
@@ -1249,6 +1294,7 @@ mod tests {
             files: 5,
             dirs: 1,
             bytes: 9,
+            ..Progress::default()
         };
         let (s, _) = update(s, Event::Progress(p));
         assert_eq!(s.scan, Scan::Running(p));
@@ -1323,6 +1369,7 @@ mod tests {
             Key::Char('?'),
             Key::Char('z'),
             Key::Char('b'),
+            Key::Char('c'),
             Key::Char('/'),
             Key::Char('g'),
             Key::Char('~'),
@@ -1341,7 +1388,9 @@ mod tests {
             let (nosnap, _) = update(State::new("/d", (80, 24)), Event::Overview(Ok(None)));
             let filtering = press(browse.clone(), Key::Char('/')).0;
             let jumping = press(browse.clone(), Key::Char('g')).0;
+            let scanning = press(o.clone(), Key::Char('r')).0;
             vec![
+                scanning,
                 o,
                 paths,
                 browse,
@@ -1358,7 +1407,11 @@ mod tests {
                 for e in fx {
                     assert!(matches!(
                         e,
-                        Effect::Browse(_) | Effect::Scan | Effect::Insights | Effect::CopyText(_)
+                        Effect::Browse(_)
+                            | Effect::Scan
+                            | Effect::CancelScan
+                            | Effect::Insights
+                            | Effect::CopyText(_)
                     ));
                 }
             }
@@ -1656,11 +1709,63 @@ mod tests {
     }
 
     #[test]
+    fn esc_cancels_a_scan_and_late_progress_is_ignored() {
+        let s = press(loaded(), Key::Char('r')).0;
+        let (s, fx) = press(s, Key::Esc);
+        assert_eq!(fx, vec![Effect::CancelScan]);
+        assert_eq!(s.scan, Scan::Idle);
+        assert!(s.status.as_ref().unwrap().text.contains("unchanged"));
+        assert!(s.overview.is_some(), "the old snapshot stays on screen");
+        let p = Progress {
+            files: 1,
+            ..Progress::default()
+        };
+        let (s, _) = update(s, Event::Progress(p));
+        assert_eq!(s.scan, Scan::Idle);
+        // Esc with no scan running does nothing on the overview.
+        let (s2, fx) = press(s.clone(), Key::Esc);
+        assert!(fx.is_empty());
+        assert_eq!(s2.view, View::Overview);
+    }
+
+    #[test]
+    fn overview_load_requests_insights_once() {
+        let (s, fx) = update(
+            State::new("/data", (80, 24)),
+            Event::Overview(Ok(Some(overview()))),
+        );
+        assert_eq!(fx, vec![Effect::Insights]);
+        let (s, _) = update(s, Event::Insights(Ok(insights())));
+        let (_, fx) = update(s, Event::Overview(Ok(Some(overview()))));
+        assert!(fx.is_empty(), "cached hints are not fetched again");
+        let (_, fx) = update(State::new("/data", (80, 24)), Event::Overview(Ok(None)));
+        assert!(fx.is_empty(), "no snapshot, no hints");
+    }
+
+    #[test]
+    fn c_copies_the_top_hint_without_moving_the_insights_cursor() {
+        let s = loaded();
+        let (s, fx) = press(s, Key::Char('c'));
+        assert!(fx.is_empty());
+        assert!(s.status.as_ref().unwrap().text.contains("loading"));
+        let (mut s, _) = update(s, Event::Insights(Ok(insights())));
+        s.insight_sel = 2;
+        let (s, fx) = press(s, Key::Char('c'));
+        assert_eq!(fx, vec![Effect::CopyText("rm -rf /p0".into())]);
+        assert_eq!(s.insight_sel, 2);
+        let (s, _) = update(s, Event::Insights(Ok(vec![])));
+        let (s, fx) = press(s, Key::Char('c'));
+        assert!(fx.is_empty());
+        assert!(s.status.unwrap().text.contains("no cleanup hints"));
+    }
+
+    #[test]
     fn progress_text_groups_digits() {
         let p = Progress {
             files: 1_234_567,
             dirs: 12,
             bytes: 2048,
+            ..Progress::default()
         };
         assert_eq!(progress_text(&p), "1,234,567 files, 12 dirs, 2.0 KiB");
     }

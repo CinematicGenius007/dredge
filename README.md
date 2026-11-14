@@ -1,8 +1,8 @@
 # dredge
 
 dredge shows what is using your disk space. It is a read-only disk-space explorer with two
-front ends over one engine: a JSON command-line tool for people and scripts, and a stdio MCP
-server for AI agents.
+front ends over one engine: a command-line tool that prints a readable view on a terminal and
+JSON to scripts, and a stdio MCP server for AI agents.
 
 Supported platforms: Windows, macOS and Linux. Windows is the primary development platform;
 macOS and Linux run the same code. CI builds, lints and tests on all three.
@@ -46,8 +46,28 @@ dredge categories ~                  # space by kind: developer, caches, photos,
 dredge insights ~                    # regenerable space, with a command to review (never run)
 dredge detail ~/Library              # everything known about one path
 dredge bar ~ --focus developer       # dithered space-by-category bar (text, not JSON)
+dredge --json browse ~ | jq .        # JSON (the default when piped)
 dredge --pretty browse ~             # indented JSON
 ```
+
+On a terminal each command prints the answer first, one table, how old the snapshot is, and
+the next command to run. For example:
+
+```
+$ dredge browse ~/proj
+4.2 GiB in ~/proj/ · 2 items, largest first
+
+       SIZE   SHARE              NAME
+    3.1 GiB   73.8%  ━━━━━━━───  node_modules/
+    1.1 GiB   26.2%  ━━━───────  assets/
+
+snapshot 2 hours old
+Next  dredge browse ~/proj/node_modules  go into the largest folder
+      dredge largest ~/proj  the biggest files below
+```
+
+Piped or redirected, or with `--json`, the same command prints one JSON document. The rules for
+this view are in [docs/UX.md](docs/UX.md).
 
 Other commands: `dredge snapshots` lists saved snapshots, `dredge doctor` checks snapshot and environment health, `dredge completions bash` prints shell completions, and `dredge schema` prints the JSON
 Schema of every output document.
@@ -74,7 +94,7 @@ each scan dredge removes unused snapshots, then the oldest, and never the one it
 cap is off by default, and when set it applies to MCP `disk_scan` too. `forget` itself is not
 available over MCP.
 
-Global flags: `--pretty`, `--verbose` (every extra field on each row), and `--data-dir <DIR>`.
+Global flags: `--json`, `--pretty`, `--verbose` (every extra field on each row), and `--data-dir <DIR>`.
 `dredge scan` also takes `--threads <N>` and `--quiet`.
 
 `dredge bar` prints a human-readable bar instead of JSON. It uses color on a terminal and plain
@@ -98,13 +118,14 @@ own: with no snapshot it offers `r`. It is a default cargo feature; build the CL
 | arrows or `h` `j` `k` `l` | move category focus (in lists: move the selection) |
 | `Enter` | open: category, then its largest paths, then folders (`browse`) |
 | `Esc` or `Backspace` | up one level, then back to the categories |
+| `c` | copy the top cleanup hint's command to the clipboard (OSC 52); never run |
 | `i` | toggle cleanup insights with the suggested command |
 | `y` | copy the selected insight's command to the clipboard (OSC 52); never run |
-| `r` | rescan the root in the background at low priority |
+| `r` | rescan the root in the background at low priority; `Esc` cancels (nothing is saved) |
 | `?` | help |
 | `q` or `Ctrl-C` | quit |
 
-Other output is one JSON document on stdout. Progress and error text go to stderr. A failed command
+Piped output (or `--json`) is one JSON document on stdout. Progress and error text go to stderr. A failed command
 exits nonzero and prints a document with `kind: "error"`. The shape of each document is in
 [docs/OUTPUT_SCHEMA.md](docs/OUTPUT_SCHEMA.md). Lists are sorted by allocated size, largest
 first, and default to 10 rows.
@@ -131,6 +152,7 @@ server with an agent client, see [docs/INSTALL.md](docs/INSTALL.md).
 - [docs/ROADMAP.md](docs/ROADMAP.md): phases and what each one delivers.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, data flow, and design decisions.
 - [docs/OUTPUT_SCHEMA.md](docs/OUTPUT_SCHEMA.md): the output contract.
+- [docs/UX.md](docs/UX.md): how commands and the TUI look on a terminal.
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md): scan speed and memory.
 - [docs/INSTALL.md](docs/INSTALL.md): install, upgrade and MCP registration.
 

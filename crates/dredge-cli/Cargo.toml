@@ -17,6 +17,7 @@ dredge-render.workspace = true
 dredge-tui = { workspace = true, optional = true }
 clap.workspace = true
 clap_complete.workspace = true
+crossterm.workspace = true
 
 [features]
 default = ["tui"]

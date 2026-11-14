@@ -15,6 +15,8 @@ use dredge_core::categories::Category;
 use dredge_core::output::CategoryRecord;
 use dredge_core::util::human_bytes;
 
+pub mod human;
+
 /// Color capability of the output terminal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColorTier {
@@ -323,6 +325,20 @@ fn columns(segments: &[Segment], width: usize) -> Vec<Option<usize>> {
     }
     cols.resize(width, None);
     cols
+}
+
+/// First column and width of each segment in a bar `width` cells wide, as `bar_cells` and
+/// `render_bar` lay it out. A segment with no cells is `None`.
+pub fn segment_spans(segments: &[Segment], width: usize) -> Vec<Option<(usize, usize)>> {
+    let mut at = 0;
+    widths(segments, width)
+        .into_iter()
+        .map(|w| {
+            let span = (w > 0).then_some((at, w));
+            at += w;
+            span
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -760,6 +776,20 @@ mod tests {
                 widths(&segs(), w).iter().sum::<usize>(),
                 if w == 0 { 0 } else { w }
             );
+        }
+    }
+
+    #[test]
+    fn segment_spans_match_columns() {
+        for w in [0, 1, 7, 40, 100] {
+            let cols = columns(&segs(), w);
+            for (i, span) in segment_spans(&segs(), w).into_iter().enumerate() {
+                let want: Vec<usize> = (0..w).filter(|&x| cols[x] == Some(i)).collect();
+                match span {
+                    Some((at, n)) => assert_eq!(want, (at..at + n).collect::<Vec<_>>()),
+                    None => assert!(want.is_empty()),
+                }
+            }
         }
     }
 

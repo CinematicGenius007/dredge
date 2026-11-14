@@ -32,3 +32,4 @@ Changes that do not touch these need no RFC. A bug fix does not need one.
 
 - [0001](0001-lazy-storage-and-honest-freshness.md): lazy snapshot storage, reuse of recent scans, honest freshness (Draft)
 - [0002](0002-snapshot-storage-management.md): managing the space dredge itself uses (Accepted)
+- [0003](0003-human-terminal-output.md): a readable view on the terminal; JSON when piped (Accepted)

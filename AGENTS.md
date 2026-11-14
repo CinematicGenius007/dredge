@@ -1,7 +1,8 @@
 # AGENTS.md
 
 dredge is a minimalist, read-only disk-space explorer for humans and AI agents: a JSON CLI and a
-stdio MCP server over one shared engine. Windows first; macOS and Linux work through the same code.
+stdio MCP server over one shared engine. On a terminal the CLI prints a readable view (docs/UX.md);
+piped, it prints JSON. Windows first; macOS and Linux work through the same code.
 
 ## Commands
 
@@ -21,15 +22,17 @@ and Linux.
 - `crates/dredge-core`: index model and builder, snapshots and store, queries, output types,
   `Engine`. No filesystem walking, no platform-specific code, `#![forbid(unsafe_code)]`.
 - `crates/dredge-scan`: scanner backends. All platform code lives in `src/platform/`.
-- `crates/dredge-render`: pure terminal rendering for `dredge bar` (strings in, strings out). No I/O,
+- `crates/dredge-render`: pure terminal rendering for `dredge bar` and the human view of every
+  command (`human.rs`, strings in, strings out). No I/O,
   no terminal queries, no async, `#![forbid(unsafe_code)]`; depends on `dredge-core` output types only.
 - `crates/dredge-tui`: `dredge tui`, a `ratatui` front end. `state.rs` is a pure
   `update(state, event) -> (state, effects)`, `view.rs` draws, `runner.rs` is the thin shell that calls
   `Engine`. No query logic. Optional in the CLI behind the `tui` feature (on by default).
-- `crates/dredge-cli`: the `dredge` binary. Parses arguments, calls `Engine`, prints JSON.
+- `crates/dredge-cli`: the `dredge` binary. Parses arguments, calls `Engine`, prints JSON, or
+  the human view when stdout is a terminal.
 - `crates/dredge-mcp`: the MCP server (`dredge mcp`). Tool handlers call `Engine`; background scans
   live in `jobs.rs`.
-- `docs/`: `ARCHITECTURE.md`, `OUTPUT_SCHEMA.md` (the contract), `BENCHMARKS.md`, `INSTALL.md`
+- `docs/`: `ARCHITECTURE.md`, `OUTPUT_SCHEMA.md` (the contract), `UX.md` (the terminal view), `BENCHMARKS.md`, `INSTALL.md`
   (install, MCP registration, upgrading while sessions hold the exe open).
 - `scripts/`: `update.ps1` (Windows) and `update.sh` (macOS, Linux) reinstall dredge from the repo.
 
@@ -38,7 +41,9 @@ and Linux.
 - One engine, thin frontends. A feature is a new `Query` plus a record type in `output.rs`, then a
   CLI subcommand and an MCP tool that only translate arguments. If the CLI and MCP outputs could
   differ, the logic is in the wrong place.
-- "stdout is one JSON document" applies to data commands. `dredge bar` and `dredge tui` are
+- "stdout is one JSON document" applies to data commands whenever stdout is not a terminal, or with
+  `--json`/`--pretty`. On a terminal they print the human view, which follows docs/UX.md and is
+  checked by `crates/dredge-render/tests/human_every_command.rs`. Never parse it. `dredge bar` and `dredge tui` are
   presentation commands: they print text for humans, never emit escape codes unless the output is a
   terminal or `--color always`, and still send errors to stderr with a nonzero exit. `dredge tui`
   draws only on a terminal and refuses to start when stdout is not one.
