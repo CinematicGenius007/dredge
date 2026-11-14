@@ -285,6 +285,18 @@ impl Engine {
         Ok(Envelope::new("categories", Some(sref), recs, sum))
     }
 
+    /// Allocated bytes of each of `paths`, read from the snapshot that answers `root`. Sizes
+    /// then agree with a `categories` or `insights` result for `root` even when a newer snapshot
+    /// covers one of the paths, and no second snapshot is loaded. `None` for a path that
+    /// snapshot does not hold. Library only (the TUI); no query kind and no output change.
+    pub fn sizes_within(&self, root: &str, paths: &[String]) -> Result<Vec<Option<u64>>, Error> {
+        let (idx, _, _) = self.open(root)?;
+        Ok(paths
+            .iter()
+            .map(|p| idx.resolve(p).map(|i| idx.allocated(i)))
+            .collect())
+    }
+
     /// Cleanup hints under `path`, largest first (`Query::Insights`). Each carries a suggested
     /// command as text; dredge never runs it.
     pub fn insights(&self, path: &str, limit: Option<usize>) -> Result<InsightsOut, Error> {
@@ -1024,6 +1036,32 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out.render(false)).unwrap();
         assert_eq!(v["kind"], "detail");
         assert_eq!(v["records"][0]["kind"], "dir");
+    }
+
+    #[test]
+    fn sizes_within_reads_the_roots_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = engine(dir.path());
+        let r = root();
+        scan_at(&e, &r).unwrap();
+        let sep = std::path::MAIN_SEPARATOR;
+        let paths = vec![
+            format!("{r}{sep}sub"),
+            format!("{r}{sep}b.txt"),
+            format!("{r}{sep}missing"),
+        ];
+        let sizes = e.sizes_within(&r, &paths).unwrap();
+        let detail = |p: &str| match e.run(&Query::Detail { path: p.into() }) {
+            Output::Detail(d) => d.records[0].allocated_bytes,
+            _ => panic!("no detail"),
+        };
+        assert_eq!(sizes[0], Some(detail(&paths[0])));
+        assert_eq!(sizes[1], Some(detail(&paths[1])));
+        assert_eq!(sizes[2], None);
+        assert!(matches!(
+            e.sizes_within(&format!("{sep}elsewhere"), &paths),
+            Err(Error::NoSnapshot { .. })
+        ));
     }
 
     fn scan_at(e: &Engine, path: &str) -> Result<ScanOut, Error> {

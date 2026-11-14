@@ -466,6 +466,7 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "crossterm",
  "dredge-core",
  "dredge-mcp",
  "dredge-render",
@@ -507,6 +508,8 @@ name = "dredge-render"
 version = "0.2.0"
 dependencies = [
  "dredge-core",
+ "tempfile",
+ "unicode-width",
 ]
 
 [[package]]

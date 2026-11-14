@@ -5,13 +5,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Clear, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::state::{
-    crumbs, legend_cols, progress_text, Cat, Input, Insight, Level, Overview, Scan, State, View,
-    INSIGHT_LINES, MIN_HEIGHT, MIN_WIDTH,
+    crumbs, fmt_count, legend_cols, progress_text, Cat, Input, Insight, Level, Overview, Scan,
+    State, View, INSIGHT_LINES, MIN_HEIGHT, MIN_WIDTH,
 };
 
 /// How colors are emitted. The bar's look is the same as `dredge bar` on every tier.
@@ -57,6 +57,23 @@ impl Theme {
     fn ink(self, ink: Ink) -> Color {
         self.color(Shade { ink, ground: false })
     }
+
+    /// One accent per meaning, as in the CLI: orange marks a cleanup hint, amber a warning.
+    fn accent(self, rgb: (u8, u8, u8), xterm: u8) -> Style {
+        match self {
+            Theme::TrueColor => Style::new().fg(Color::Rgb(rgb.0, rgb.1, rgb.2)),
+            Theme::Ansi256 => Style::new().fg(Color::Indexed(xterm)),
+            Theme::Plain => Style::new(),
+        }
+    }
+
+    fn hint(self) -> Style {
+        self.accent((234, 88, 12), 208)
+    }
+
+    fn warn(self) -> Style {
+        self.accent((229, 165, 10), 214)
+    }
 }
 
 const DIM: Style = Style::new().fg(Color::DarkGray);
@@ -76,8 +93,9 @@ pub fn draw(f: &mut Frame, s: &State, theme: Theme) {
     }
     let w = area.width;
     let body = Rect::new(0, 1, w, area.height - 2);
+    let edge = inset(Rect::new(0, 0, w, 1));
     let buf = f.buffer_mut();
-    header(buf, s, w);
+    header(buf, s, edge, theme);
     if s.help {
         help(buf, body);
     } else {
@@ -88,7 +106,12 @@ pub fn draw(f: &mut Frame, s: &State, theme: Theme) {
             View::Insights => insights(buf, s, body),
         }
     }
-    status(buf, s, Rect::new(0, area.height - 1, w, 1), theme);
+    status(
+        buf,
+        s,
+        Rect::new(edge.x, area.height - 1, edge.width, 1),
+        theme,
+    );
     if theme == Theme::Plain {
         for cell in &mut buf.content {
             cell.set_fg(Color::Reset).set_bg(Color::Reset);
@@ -194,56 +217,171 @@ fn put(buf: &mut Buffer, rect: Rect, row: usize, line: Line) {
 // ---------------------------------------------------------------------------------------------
 // Header and status
 
-fn header(buf: &mut Buffer, s: &State, w: u16) {
-    let w = usize::from(w);
-    let mut stats = String::new();
-    if let Some(o) = &s.overview {
-        stats.push_str(&o.used_human);
-        if let Some(t) = o.total_bytes.filter(|t| *t > 0) {
-            let pct = o.used_bytes as f64 / t as f64 * 100.0;
-            stats.push_str(&format!(
-                " of {} ({pct:.1}%)",
-                dredge_core::util::human_bytes(t)
-            ));
+/// `~` for the home folder, as the CLI prints paths. Display only.
+fn tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(h) if h.len() > 1 && path.starts_with(&h) => {
+            let rest = &path[h.len()..];
+            if rest.is_empty() {
+                "~".into()
+            } else if rest.starts_with('/') {
+                format!("~{rest}")
+            } else {
+                path.to_string()
+            }
         }
-        stats.push_str(&format!("  snapshot {} old", fmt_age(o.age_secs)));
-    } else if s.loaded {
-        stats.push_str("no snapshot");
+        _ => path.to_string(),
     }
-    let scan = match &s.scan {
-        Scan::Running(p) => format!("  scanning: {}", progress_text(p)),
-        Scan::Idle => String::new(),
-    };
-    let right = format!("{stats}{scan}");
-    let path_w = w.saturating_sub(right.chars().count() + 2).max(8);
-    let title = fit_tail(&s.root, path_w);
-    let used = UnicodeWidthStr::width(title.as_str());
-    let right_w = w.saturating_sub(used + 2);
-    let mut spans = vec![Span::styled(title, BOLD)];
-    if right_w > 0 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            fit(&right, right_w),
-            if scan.is_empty() { Style::new() } else { DIM },
-        ));
-    }
-    buf.set_line(0, 0, &clean(Line::from(spans)), w as u16);
 }
 
-fn hints(s: &State) -> &'static str {
-    if s.help {
-        return "? or Esc close help  q quit";
-    }
-    match s.view {
-        View::Overview if s.overview.is_none() => "r scan  ? help  q quit",
-        View::Overview => "\u{2190}\u{2191}\u{2193}\u{2192} move  Enter open  b browse  i insights  r rescan  ? help  q quit",
-        View::Paths => "\u{2191}\u{2193} select  Enter browse  y copy  Esc back  i insights  ? help  q quit",
-        View::Browse if s.current().and_then(Level::selected).is_some_and(|e| !e.is_dir) => {
-            "\u{2191}\u{2193} move  \u{2190} back  y copy path  / filter  g jump  Esc exit  ? help"
+/// A path as two spans, faint parent and plain leaf, cut in the parent's middle to fit `max`.
+/// `dir` adds the trailing `/` a folder gets everywhere else.
+fn path_spans(p: &str, dir: bool, max: usize) -> (Vec<Span<'static>>, usize) {
+    let home = std::env::var("HOME").ok();
+    let (parent, leaf) = dredge_render::human::fit_path(p, home.as_deref(), dir, max);
+    let w = UnicodeWidthStr::width(parent.as_str()) + UnicodeWidthStr::width(leaf.as_str());
+    (vec![Span::styled(parent, DIM), Span::raw(leaf)], w)
+}
+
+/// Snapshots older than this are flagged in amber, the same week the CLI uses.
+const STALE_SECS: u64 = dredge_render::human::STALE_SECS;
+
+fn header(buf: &mut Buffer, s: &State, rect: Rect, theme: Theme) {
+    let w = usize::from(rect.width);
+    let (right, right_style) = match (&s.scan, &s.overview) {
+        (Scan::Running(p), _) => (format!("scanning \u{b7} {}", progress_text(p)), DIM),
+        (Scan::Idle, Some(o)) => {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(l) = &o.label {
+                parts.push(l.clone());
+            }
+            if let Some(f) = &o.fs {
+                parts.push(f.clone());
+            }
+            let age = dredge_render::human::age(o.age_secs);
+            if o.age_secs > STALE_SECS {
+                parts.push(format!("! scanned {age} ago"));
+                (parts.join(" \u{b7} "), theme.warn())
+            } else {
+                parts.push(format!("scanned {age} ago"));
+                (parts.join(" \u{b7} "), DIM)
+            }
         }
-        View::Browse => "\u{2191}\u{2193} move  \u{2192} open  \u{2190} back  / filter  g jump  y copy  Esc exit  ? help",
-        View::Insights => "\u{2191}\u{2193} select  Enter show  y copy command  i or Esc back  q quit",
+        (Scan::Idle, None) if s.loaded => ("no snapshot".into(), DIM),
+        (Scan::Idle, None) => (String::new(), DIM),
+    };
+    let lead = "dredge \u{203a} ";
+    let rw = UnicodeWidthStr::width(right.as_str());
+    let path_w = w
+        .saturating_sub(lead.len() + if rw > 0 { rw + 2 } else { 0 })
+        .max(8);
+    let title = fit_tail(&tilde(&s.root), path_w);
+    let left = vec![
+        Span::styled("dredge", BOLD),
+        Span::styled(" \u{203a} ", DIM),
+        Span::styled(title, BOLD),
+    ];
+    put(
+        buf,
+        rect,
+        0,
+        split_line(left, Span::styled(right, right_style), w),
+    );
+}
+
+type Keys = &'static [(&'static str, &'static str)];
+
+/// Key hints for the footer: the view's own keys on the left, help and quit on the right.
+fn hints(s: &State) -> (Keys, Keys) {
+    const END: Keys = &[("?", "help"), ("q", "quit")];
+    if s.help {
+        return (&[("?", "close help"), ("esc", "close")], &[("q", "quit")]);
     }
+    let left: Keys = match s.view {
+        View::Overview if s.scanning() && s.overview.is_some() => {
+            &[("esc", "cancel scan"), ("b", "browse last snapshot")]
+        }
+        View::Overview if s.scanning() => &[("esc", "cancel scan")],
+        View::Overview if s.overview.is_none() => &[("r", "scan")],
+        View::Overview => &[
+            ("\u{2190}\u{2192}", "category"),
+            ("\u{21b5}", "open"),
+            ("b", "browse"),
+            ("i", "insights"),
+            ("c", "copy hint"),
+            ("r", "rescan"),
+        ],
+        View::Paths => &[
+            ("\u{2191}\u{2193}", "select"),
+            ("\u{21b5}", "browse"),
+            ("y", "copy"),
+            ("esc", "back"),
+            ("i", "insights"),
+        ],
+        View::Browse
+            if s.current()
+                .and_then(Level::selected)
+                .is_some_and(|e| !e.is_dir) =>
+        {
+            &[
+                ("\u{2191}\u{2193}", "move"),
+                ("\u{2190}", "back"),
+                ("y", "copy path"),
+                ("/", "filter"),
+                ("g", "jump"),
+                ("esc", "exit"),
+            ]
+        }
+        View::Browse => &[
+            ("\u{2191}\u{2193}", "move"),
+            ("\u{2192}", "open"),
+            ("\u{2190}", "back"),
+            ("/", "filter"),
+            ("g", "jump"),
+            ("y", "copy"),
+            ("esc", "exit"),
+        ],
+        View::Insights => &[
+            ("\u{2191}\u{2193}", "select"),
+            ("\u{21b5}", "show"),
+            ("y", "copy command"),
+            ("esc", "back"),
+        ],
+    };
+    (left, END)
+}
+
+/// Bold keys and dim labels. Pairs that do not fit are dropped from the end, never cut.
+fn key_spans(keys: Keys, w: usize) -> (Vec<Span<'static>>, usize) {
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (k, label) in keys {
+        let gap = if spans.is_empty() { 0 } else { 3 };
+        let n = gap + UnicodeWidthStr::width(*k) + 1 + UnicodeWidthStr::width(*label);
+        if used + n > w {
+            break;
+        }
+        if gap > 0 {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(Span::styled(*k, BOLD));
+        spans.push(Span::styled(format!(" {label}"), DIM));
+        used += n;
+    }
+    (spans, used)
+}
+
+fn hint_line(s: &State, w: usize) -> Line<'static> {
+    let (left, right) = hints(s);
+    // Help and quit stay visible; the view's own keys give way first.
+    let (r, rw) = key_spans(right, w);
+    let room = if w >= rw + 4 + 12 { w - rw - 4 } else { w };
+    let (mut spans, lw) = key_spans(left, room);
+    if lw + 4 + rw <= w {
+        spans.push(Span::raw(" ".repeat(w - lw - rw)));
+        spans.extend(r);
+    }
+    Line::from(spans)
 }
 
 /// Left text and a right-aligned note on one line; the note is dropped when it does not fit.
@@ -318,7 +456,7 @@ fn status(buf: &mut Buffer, s: &State, rect: Rect, theme: Theme) {
                 fit(&st.text, w),
                 if st.error { ERROR } else { Style::new() },
             ),
-            None => Line::styled(fit(hints(s), w), DIM),
+            None => hint_line(s, w),
         }
     };
     put(buf, rect, 0, line);
@@ -340,33 +478,50 @@ fn segments(o: &Overview) -> Vec<Segment> {
 }
 
 fn overview(buf: &mut Buffer, s: &State, body: Rect, theme: Theme) {
+    if let Scan::Running(p) = &s.scan {
+        return scanning(buf, s, p, inset(body), theme);
+    }
     let Some(o) = &s.overview else {
         let msg = if !s.loaded {
             "Loading\u{2026}".to_string()
-        } else if s.scanning() {
-            "Scanning\u{2026} the first snapshot appears when it finishes.".into()
         } else {
-            format!("No snapshot for {} yet.\nPress r to scan it.", s.root)
+            format!(
+                "No snapshot for {} yet.\nPress r to scan it.",
+                tilde(&s.root)
+            )
         };
+        let area = inset(body);
         for (i, l) in msg.lines().enumerate() {
-            put(buf, body, i + 1, Line::raw(fit(l, usize::from(body.width))));
+            put(buf, area, i + 1, Line::raw(fit(l, usize::from(area.width))));
         }
         return;
     };
     if o.cats.is_empty() {
-        put(buf, body, 1, Line::raw("No space used under this path."));
+        put(
+            buf,
+            inset(body),
+            1,
+            Line::raw("No space used under this path."),
+        );
         return;
     }
-    let width = usize::from(body.width);
+    let area = inset(body);
+    let w = usize::from(area.width);
+    let h = usize::from(area.height);
+    // Breathing room around the totals only when there is height to spare.
+    let roomy = h >= 16;
+    let mut row = usize::from(roomy);
+    put(buf, area, row, totals(o, w));
+    row += 1 + usize::from(roomy);
+
     let segs = segments(o);
     let focus = Some(s.focus);
-    let mut row = 0;
     if theme == Theme::Plain {
-        let line = &dredge_render::render_bar(&segs, width, focus, Caps::PLAIN)[0];
-        put(buf, body, row, Line::raw(line.0.clone()));
+        let line = &dredge_render::render_bar(&segs, w, focus, Caps::PLAIN)[0];
+        put(buf, area, row, Line::raw(line.0.clone()));
         row += 1;
     } else {
-        for cells in bar_cells(&segs, width, focus, Glyphs::HalfBlock) {
+        for cells in bar_cells(&segs, w, focus, Glyphs::HalfBlock) {
             let spans: Vec<Span> = cells
                 .iter()
                 .map(|c| {
@@ -376,17 +531,26 @@ fn overview(buf: &mut Buffer, s: &State, body: Rect, theme: Theme) {
                     )
                 })
                 .collect();
-            put(buf, body, row, Line::from(spans));
+            put(buf, area, row, Line::from(spans));
             row += 1;
         }
     }
-    row += 1;
+    if let Some(c) = s.focused() {
+        let span = dredge_render::segment_spans(&segs, w)
+            .get(s.focus)
+            .copied()
+            .flatten();
+        put(buf, area, row, pointer(c, o, span, w));
+    }
+    row += 2;
 
-    // Legend, scrolled so the focused row stays visible, leaving room for the detail pane.
-    let cols = legend_cols(&o.cats, body.width);
+    // The top cleanup hint sits on the last row; the legend and the focused category's
+    // paths share what is left, the legend first.
+    let hint_rows = if h >= 10 { 2 } else { 0 };
+    let avail = h.saturating_sub(row + hint_rows);
+    let cols = legend_cols(&o.cats, area.width);
     let entries = legend_entries(o, s.focus, theme, cols);
     let total_rows = entries.len().div_ceil(cols);
-    let avail = usize::from(body.height).saturating_sub(row);
     let shown = total_rows.min(avail.saturating_sub(4).max(1)).min(avail);
     let first = if shown >= total_rows {
         0
@@ -398,20 +562,440 @@ fn overview(buf: &mut Buffer, s: &State, body: Rect, theme: Theme) {
         for e in chunk {
             spans.extend(e.iter().cloned());
         }
-        put(buf, body, row + r, Line::from(spans));
+        put(buf, area, row + r, Line::from(spans));
     }
     row += shown;
-    if avail > shown + 1 {
-        row += 1;
-        let pane = Rect::new(
-            body.x,
-            body.y + row as u16,
-            body.width,
-            body.height - row as u16,
-        );
+    let mut left = avail.saturating_sub(shown);
+    if left >= 3 {
         if let Some(c) = s.focused() {
-            detail(buf, c, o, pane);
+            // A blank, the title, then one row per path (at least one, for the empty note).
+            let need = (2 + c.top.len().max(1)).min(left);
+            inside(
+                buf,
+                s,
+                c,
+                Rect::new(
+                    area.x,
+                    area.y + row as u16 + 1,
+                    area.width,
+                    (need - 1) as u16,
+                ),
+                theme,
+            );
+            row += need;
+            left -= need;
         }
+    }
+    if hint_rows == 0 {
+        return;
+    }
+    // Spare rows hold a short list of cleanup hints; otherwise the top one sits on the last row.
+    let spare = left + hint_rows;
+    match s.insights.as_deref() {
+        Some(list) if list.len() > 1 && spare >= 4 => {
+            let k = list.len().min(spare - 2).min(HINTS_SHOWN);
+            hint_list(
+                buf,
+                list,
+                k,
+                Rect::new(area.x, area.y + row as u16 + 1, area.width, (k + 1) as u16),
+                theme,
+            );
+        }
+        _ => put(buf, area, h - 1, top_hint(s, w, theme)),
+    }
+}
+
+/// Most cleanup hints the overview lists; `i` shows them all.
+const HINTS_SHOWN: usize = 5;
+
+/// `Cleanup hints`: the largest few, path first so the leaf always shows, the message after it.
+fn hint_list(buf: &mut Buffer, list: &[Insight], k: usize, area: Rect, theme: Theme) {
+    let w = usize::from(area.width);
+    let more = list.len().saturating_sub(k);
+    let right = if more > 0 {
+        format!("c copy the first   i all {}", list.len())
+    } else {
+        "c copy the first".into()
+    };
+    put(
+        buf,
+        area,
+        0,
+        split_line(
+            vec![
+                Span::styled("Cleanup hints", BOLD),
+                Span::styled("  dredge never runs these", DIM),
+            ],
+            Span::styled(right, DIM),
+            w,
+        ),
+    );
+    let hw = list
+        .iter()
+        .take(k)
+        .map(|i| i.human.len())
+        .max()
+        .unwrap_or(0);
+    for (n, ins) in list.iter().take(k).enumerate() {
+        let room = w.saturating_sub(2 + hw + 2);
+        // The path gets up to three fifths; the message fills what is left.
+        let (path, pw) = path_spans(&ins.path, true, (room * 3 / 5).max(room.min(16)));
+        let rest = room.saturating_sub(pw + 2);
+        let mut spans = vec![
+            Span::styled("\u{25c6} ", theme.hint()),
+            Span::styled(lpad(&ins.human, hw), BOLD),
+            Span::raw("  "),
+        ];
+        spans.extend(path);
+        if rest >= 8 {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(fit(&ins.message, rest), DIM));
+        }
+        put(buf, area, 1 + n, Line::from(spans));
+    }
+}
+
+/// Two columns of margin on each side once the terminal is wide enough to spare them.
+fn inset(body: Rect) -> Rect {
+    let m = if body.width >= 40 { 2 } else { 0 };
+    Rect::new(body.x + m, body.y, body.width - 2 * m, body.height)
+}
+
+/// `412.3 GiB used of 494.4 GiB · 82.1 GiB free`, or the folder's own size off a mount point.
+fn totals(o: &Overview, w: usize) -> Line<'static> {
+    let mut spans = vec![Span::styled(o.used_human.clone(), BOLD)];
+    match o.total_bytes.filter(|t| *t > 0) {
+        Some(t) => {
+            let pct = o.used_bytes as f64 / t as f64 * 100.0;
+            spans.push(Span::styled(
+                format!(" used of {} ({pct:.0}%)", dredge_core::util::human_bytes(t)),
+                DIM,
+            ));
+        }
+        None => spans.push(Span::styled(" in this folder", DIM)),
+    }
+    if let Some(f) = o.free_bytes {
+        spans.push(Span::styled("   \u{b7}   ", DIM));
+        spans.push(Span::styled(dredge_core::util::human_bytes(f), BOLD));
+        spans.push(Span::styled(" free", DIM));
+    }
+    let used: usize = spans
+        .iter()
+        .map(|sp| UnicodeWidthStr::width(sp.content.as_ref()))
+        .sum();
+    if used > w {
+        return Line::raw(fit(
+            &spans
+                .iter()
+                .map(|sp| sp.content.as_ref())
+                .collect::<String>(),
+            w,
+        ));
+    }
+    Line::from(spans)
+}
+
+/// The line under the bar: `└ Developer  300 MiB · 30% of disk · 12 files   ↵ open`, starting
+/// under the focused segment, or ending at it (`┘`) when it does not fit to the right. Detail
+/// is dropped from the end until one of the two fits.
+fn pointer(c: &Cat, o: &Overview, span: Option<(usize, usize)>, w: usize) -> Line<'static> {
+    let share = match o.total_bytes.filter(|t| *t > 0) {
+        Some(t) => format!("{:.1}% of disk", c.bytes as f64 / t as f64 * 100.0),
+        None => format!("{:.1}% of used", c.share),
+    };
+    let files = format!(
+        "{} {}",
+        fmt_count(c.files),
+        if c.files == 1 { "file" } else { "files" }
+    );
+    let open = if c.top.is_empty() {
+        ""
+    } else {
+        "   \u{21b5} open"
+    };
+    let label = c.ink.label();
+    let variants = [
+        (format!("  {} \u{b7} {share} \u{b7} {files}", c.human), open),
+        (format!("  {} \u{b7} {share} \u{b7} {files}", c.human), ""),
+        (format!("  {} \u{b7} {share}", c.human), ""),
+        (format!("  {}", c.human), ""),
+    ];
+    let (at, n) = span.unwrap_or((0, 1));
+    for (facts, open) in &variants {
+        let text_w = 2
+            + UnicodeWidthStr::width(label)
+            + UnicodeWidthStr::width(facts.as_str())
+            + UnicodeWidthStr::width(*open);
+        let body = |lead: &'static str, tail: &'static str| {
+            vec![
+                Span::styled(lead, DIM),
+                Span::styled(label.to_string(), BOLD),
+                Span::raw(facts.clone()),
+                Span::styled(open.to_string(), DIM),
+                Span::styled(tail, DIM),
+            ]
+        };
+        if at + text_w <= w {
+            let mut v = vec![Span::raw(" ".repeat(at))];
+            v.extend(body("\u{2514} ", ""));
+            return Line::from(v);
+        }
+        let end = (at + n).min(w);
+        if text_w <= end {
+            let mut v = vec![Span::raw(" ".repeat(end - text_w))];
+            v.extend(body("", " \u{2518}"));
+            return Line::from(v);
+        }
+    }
+    Line::raw(fit(&format!("{label}  {}", c.human), w))
+}
+
+/// A cleanup hint covers `path` when one is inside the other.
+fn reclaimable(s: &State, path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    s.insights.as_deref().is_some_and(|l| {
+        l.iter().any(|i| {
+            let q = std::path::Path::new(&i.path);
+            p.starts_with(q) || q.starts_with(p)
+        })
+    })
+}
+
+/// "Inside Developer": the focused category's largest paths with a share bar each.
+fn inside(buf: &mut Buffer, s: &State, c: &Cat, area: Rect, theme: Theme) {
+    let w = usize::from(area.width);
+    if c.top.is_empty() {
+        put(
+            buf,
+            area,
+            0,
+            Line::from(vec![
+                Span::styled("Inside ", DIM),
+                Span::styled(c.ink.label(), BOLD),
+                Span::styled("  no single large path; it is spread thin", DIM),
+            ]),
+        );
+        return;
+    }
+    put(
+        buf,
+        area,
+        0,
+        Line::from(vec![
+            Span::styled("Inside ", DIM),
+            Span::styled(c.ink.label(), BOLD),
+            Span::styled("  largest paths", DIM),
+        ]),
+    );
+    let rows = usize::from(area.height).saturating_sub(1);
+    let ink = if theme == Theme::Plain {
+        Style::new()
+    } else {
+        Style::new().fg(theme.ink(c.ink))
+    };
+    let sizes: Vec<String> = (0..c.top.len())
+        .map(|i| {
+            c.top_bytes
+                .get(i)
+                .filter(|b| **b > 0)
+                .map_or_else(String::new, |b| dredge_core::util::human_bytes(*b))
+        })
+        .collect();
+    let sw = sizes.iter().map(|x| x.len()).max().unwrap_or(0);
+    let bar_w = if w >= 60 { 10 } else { 0 };
+    for (i, p) in c.top.iter().enumerate().take(rows) {
+        let frac = match (c.top_bytes.get(i), c.bytes) {
+            (Some(b), t) if t > 0 => (*b as f64 / t as f64).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+        let mut spans = vec![Span::styled(format!("{:>2}  ", i + 1), DIM)];
+        if bar_w > 0 {
+            let filled =
+                ((frac * bar_w as f64).round() as usize).clamp(usize::from(frac > 0.0), bar_w);
+            spans.push(Span::styled("\u{2501}".repeat(filled), ink));
+            spans.push(Span::styled("\u{2500}".repeat(bar_w - filled), DIM));
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::raw(lpad(&sizes[i], sw)));
+        spans.push(Span::raw("  "));
+        let tag = if reclaimable(s, p) {
+            "  \u{25c6} reclaimable"
+        } else {
+            ""
+        };
+        let used = 4 + if bar_w > 0 { bar_w + 2 } else { 0 } + sw + 2;
+        let room = w.saturating_sub(used);
+        let tag = if room >= 24 + tag.len() { tag } else { "" };
+        let (path, _) = path_spans(p, true, room.saturating_sub(UnicodeWidthStr::width(tag)));
+        spans.extend(path);
+        if !tag.is_empty() {
+            spans.push(Span::styled(tag, theme.hint()));
+        }
+        put(buf, area, 1 + i, Line::from(spans));
+    }
+}
+
+/// The last body row: the largest cleanup hint, and how to act on it.
+fn top_hint(s: &State, w: usize, theme: Theme) -> Line<'static> {
+    let Some(list) = &s.insights else {
+        return Line::styled("\u{25c6} looking for cleanup hints\u{2026}", DIM);
+    };
+    let Some(top) = list.first() else {
+        return Line::styled("no cleanup hints for this path", DIM);
+    };
+    let more = list.len() - 1;
+    let right = if more > 0 {
+        format!("c copy   i {more} more")
+    } else {
+        "c copy".into()
+    };
+    let rw = UnicodeWidthStr::width(right.as_str());
+    let lead = format!("{}  ", top.human);
+    let room = w.saturating_sub(2 + lead.len() + rw + 3);
+    // Path first, as in the list: its leaf always shows; the message fills what is left.
+    let (path, pw) = path_spans(&top.path, true, (room * 3 / 5).max(room.min(16)));
+    let mut left = vec![
+        Span::styled("\u{25c6} ", theme.hint()),
+        Span::styled(lead, BOLD),
+    ];
+    left.extend(path);
+    let rest = room.saturating_sub(pw + 2);
+    if rest >= 8 {
+        left.push(Span::raw("  "));
+        left.push(Span::styled(fit(&top.message, rest), DIM));
+    }
+    split_line(left, Span::styled(right, DIM), w)
+}
+
+/// The scanning screen: what has been read so far, and a percentage only when there is an
+/// honest total to compare against.
+fn scanning(buf: &mut Buffer, s: &State, p: &crate::state::Progress, area: Rect, theme: Theme) {
+    let w = usize::from(area.width);
+    let h = usize::from(area.height);
+    let mut row = usize::from(h >= 12);
+    put(
+        buf,
+        area,
+        row,
+        Line::from(vec![
+            Span::styled("Scanning ", DIM),
+            Span::styled(fit_tail(&tilde(&s.root), w.saturating_sub(9)), BOLD),
+        ]),
+    );
+    row += 1 + usize::from(h >= 12);
+    put(
+        buf,
+        area,
+        row,
+        Line::from(vec![
+            Span::styled(dredge_core::util::human_bytes(p.bytes), BOLD),
+            Span::styled("  read so far", DIM),
+        ]),
+    );
+    row += 1;
+    let secs = p.elapsed_ms as f64 / 1000.0;
+    let mut facts = format!(
+        "{} files \u{b7} {} folders \u{b7} {}",
+        fmt_count(p.files),
+        fmt_count(p.dirs),
+        elapsed(p.elapsed_ms)
+    );
+    if secs >= 1.0 {
+        facts.push_str(&format!(
+            " \u{b7} {} files/s",
+            fmt_count((p.files as f64 / secs) as u64)
+        ));
+    }
+    put(buf, area, row, Line::styled(fit(&facts, w), DIM));
+    row += 1;
+    if p.errors > 0 {
+        put(
+            buf,
+            area,
+            row,
+            Line::styled(
+                format!(
+                    "! {} {} could not be read so far",
+                    fmt_count(p.errors),
+                    if p.errors == 1 { "folder" } else { "folders" }
+                ),
+                theme.warn(),
+            ),
+        );
+        row += 1;
+    }
+    row += 1;
+    match p.expected_bytes.filter(|e| *e > 0) {
+        Some(total) => {
+            let frac = (p.bytes as f64 / total as f64).min(0.99);
+            let bar_w = w.saturating_sub(24).clamp(0, 48);
+            let filled = (frac * bar_w as f64).round() as usize;
+            let accent = if theme == Theme::Plain {
+                BOLD
+            } else {
+                Style::new().fg(theme.ink(Ink::Caches))
+            };
+            let mut spans = vec![
+                Span::styled("\u{2501}".repeat(filled), accent),
+                Span::styled("\u{2500}".repeat(bar_w - filled), DIM),
+                Span::styled(format!("  {:.0}%", frac * 100.0), BOLD),
+            ];
+            // An estimate only once the rate has settled.
+            if secs >= 2.0 && frac >= 0.02 {
+                let left = (secs / frac - secs).max(1.0);
+                spans.push(Span::styled(
+                    format!("  about {} left", elapsed((left * 1000.0) as u64)),
+                    DIM,
+                ));
+            }
+            put(buf, area, row, Line::from(spans));
+            row += 1;
+            put(
+                buf,
+                area,
+                row,
+                Line::styled(fit("measured against the volume's used space", w), DIM),
+            );
+        }
+        None => put(
+            buf,
+            area,
+            row,
+            Line::styled(
+                fit(
+                    "no percentage: a folder's size is only known once it has been read",
+                    w,
+                ),
+                DIM,
+            ),
+        ),
+    }
+    row += 2;
+    let threads = match p.threads {
+        0 => String::new(),
+        1 => "reading with 1 thread, low priority so the machine stays usable".into(),
+        n => format!("reading with {n} threads, low priority so the machine stays usable"),
+    };
+    put(buf, area, row, Line::styled(fit(&threads, w), DIM));
+    row += 1;
+    let keep = match &s.overview {
+        Some(o) => format!(
+            "the snapshot from {} ago stays in use until this one finishes",
+            dredge_render::human::age(o.age_secs)
+        ),
+        None => "results appear when the scan finishes".into(),
+    };
+    put(buf, area, row, Line::styled(fit(&keep, w), DIM));
+}
+
+fn elapsed(ms: u64) -> String {
+    let secs = ms / 1000;
+    match secs {
+        0..=9 => format!("{:.1}s", ms as f64 / 1000.0),
+        10..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3600, secs / 60 % 60),
     }
 }
 
@@ -487,39 +1071,6 @@ fn legend_entries(
             ]
         })
         .collect()
-}
-
-fn detail(buf: &mut Buffer, c: &Cat, o: &Overview, pane: Rect) {
-    let title = format!(" {} ", c.ink.label());
-    let inner = if pane.height >= 4 && pane.width >= 8 {
-        let block = Block::bordered().title(title);
-        let inner = block.inner(pane);
-        block.render(pane, buf);
-        inner
-    } else {
-        pane
-    };
-    let w = usize::from(inner.width);
-    let share = if o.used_bytes > 0 {
-        format!("{:.1}% of used", c.share)
-    } else {
-        "0% of used".into()
-    };
-    let facts = format!("{}  \u{b7}  {share}  \u{b7}  {} files", c.human, c.files);
-    put(buf, inner, 0, Line::styled(fit(&facts, w), BOLD));
-    if c.top.is_empty() {
-        put(buf, inner, 1, Line::styled("No single large path.", DIM));
-        return;
-    }
-    put(
-        buf,
-        inner,
-        1,
-        Line::styled("Largest paths (Enter to open):", DIM),
-    );
-    for (i, p) in c.top.iter().enumerate() {
-        put(buf, inner, 2 + i, Line::raw(fit_tail(p, w)));
-    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -940,10 +1491,15 @@ fn help(buf: &mut Buffer, body: Rect) {
         ("Esc", "leave browse (or clear the filter)"),
         ("i", "toggle cleanup insights"),
         (
+            "c",
+            "copy the top hint's command from the overview (never run)",
+        ),
+        (
             "y",
             "copy the selected path, or an insight's command (never run)",
         ),
         ("r", "rescan the root in the background"),
+        ("Esc", "while scanning: cancel; the last snapshot stays"),
         ("?", "toggle this help"),
         ("q Ctrl-C", "quit"),
     ];
@@ -979,6 +1535,7 @@ mod tests {
             share: bytes as f64 / 6.0,
             files: 12,
             top: top.iter().map(|s| s.to_string()).collect(),
+            top_bytes: top.iter().map(|_| bytes / 2).collect(),
         }
     }
 
@@ -989,6 +1546,8 @@ mod tests {
             used_human: "600.0 MiB".into(),
             total_bytes: Some(1000 << 20),
             free_bytes: Some(400 << 20),
+            label: Some("Data".into()),
+            fs: Some("apfs".into()),
             age_secs: 7300,
             cats: vec![
                 cat(
@@ -1032,29 +1591,33 @@ mod tests {
     }
 
     #[test]
-    fn overview_at_80x24_has_header_bar_legend_and_detail() {
+    fn overview_at_80x24_follows_the_board() {
         let s = loaded((80, 24));
         let b = render(&s, Theme::TrueColor);
         let t = text(&b);
         for want in [
-            "/data",
-            "600.0 MiB of 1000.0 MiB (60.0%)",
-            "snapshot 2h old",
-            "Developer",
+            "dredge \u{203a} /data",
+            "Data \u{b7} apfs \u{b7} scanned 2 h ago",
+            "600.0 MiB used of 1000.0 MiB (60%)",
+            "400.0 MiB free",
+            "\u{2514} Developer  300.0 MiB \u{b7} 30.0% of disk \u{b7} 12 files   \u{21b5} open",
             "Photos",
             "Caches",
             "Free",
-            "Largest paths",
-            "/data/proj/node_modules",
+            "Inside Developer",
+            "150.0 MiB  /data/proj/node_modules/",
+            "looking for cleanup hints",
+            "? help",
             "q quit",
         ] {
             assert!(t.contains(want), "missing {want:?} in:\n{t}");
         }
-        // The bar is the dithered half-block bar in the ink colors, on rows 1 and 2.
-        let bar = b[(0, 1)].clone();
+        // The dithered half-block bar, in the ink colors, inside a two-column margin.
+        let bar = b[(2, 4)].clone();
         assert_eq!(bar.symbol(), "\u{2580}");
         assert!(matches!(bar.fg, Color::Rgb(..)) && matches!(bar.bg, Color::Rgb(..)));
-        assert_eq!(b[(79, 2)].symbol(), "\u{2580}");
+        assert_eq!(b[(77, 5)].symbol(), "\u{2580}");
+        assert_eq!(b[(78, 5)].symbol(), " ");
     }
 
     #[test]
@@ -1063,10 +1626,10 @@ mod tests {
         let b = render(&s, Theme::TrueColor);
         let o = overview();
         let segs = segments(&o);
-        let rows = bar_cells(&segs, 80, Some(0), Glyphs::HalfBlock);
+        let rows = bar_cells(&segs, 76, Some(0), Glyphs::HalfBlock);
         for (y, row) in rows.iter().enumerate() {
             for (x, c) in row.iter().enumerate() {
-                let cell = &b[(x as u16, 1 + y as u16)];
+                let cell = &b[(2 + x as u16, 4 + y as u16)];
                 assert_eq!(cell.symbol(), c.ch.to_string());
                 assert_eq!(cell.fg, Theme::TrueColor.color(c.fg));
                 assert_eq!(cell.bg, Theme::TrueColor.color(c.bg));
@@ -1075,15 +1638,135 @@ mod tests {
     }
 
     #[test]
-    fn focus_changes_the_detail_pane() {
+    fn focus_moves_the_pointer_and_the_inside_list() {
         let s = press(loaded((80, 24)), Key::Right);
         let t = text(&render(&s, Theme::TrueColor));
         assert!(
             t.contains("/data/pics") && !t.contains("node_modules"),
             "{t}"
         );
+        // The pointer starts under the Photos segment, which begins after Developer's cells.
+        let segs = segments(&overview());
+        let (at, _) = dredge_render::segment_spans(&segs, 76)[1].unwrap();
+        let line = row_with(&render(&s, Theme::TrueColor), "\u{2514} Photos").unwrap();
+        assert_eq!(line.find('\u{2514}'), Some(2 + at), "{line}");
         let s = press(s, Key::Right);
-        assert!(text(&render(&s, Theme::TrueColor)).contains("No single large path"));
+        let t = text(&render(&s, Theme::TrueColor));
+        assert!(t.contains("no single large path"), "{t}");
+        let ptr = row_with(&render(&s, Theme::TrueColor), "Caches  ").unwrap();
+        assert!(!ptr.contains("\u{21b5} open"), "nothing to open: {ptr}");
+    }
+
+    #[test]
+    fn pointer_ends_under_a_segment_near_the_right_edge() {
+        let mut s = loaded((80, 24));
+        s.focus = 2;
+        let segs = segments(s.overview.as_ref().unwrap());
+        let (at, n) = dredge_render::segment_spans(&segs, 76)[2].unwrap();
+        let line = row_with(&render(&s, Theme::TrueColor), "Caches  100").unwrap();
+        // Text that fits to the right starts with └; otherwise it ends with ┘ under the segment.
+        match (line.find('\u{2514}'), line.find('\u{2518}')) {
+            (Some(x), None) => assert_eq!(x, 2 + at, "{line}"),
+            (None, Some(_)) => {
+                let end = line.trim_end().chars().count();
+                assert_eq!(end, 2 + at + n, "{line}");
+            }
+            _ => panic!("no pointer glyph: {line}"),
+        }
+    }
+
+    #[test]
+    fn top_hint_and_reclaimable_paths() {
+        let s = loaded((80, 24));
+        let list = vec![
+            Insight {
+                human: "150.0 MiB".into(),
+                message: "Node dependencies".into(),
+                path: "/data/proj/node_modules".into(),
+                suggested_command: "rm -rf /data/proj/node_modules".into(),
+            },
+            Insight {
+                human: "1.0 MiB".into(),
+                message: "other".into(),
+                path: "/elsewhere".into(),
+                suggested_command: "true".into(),
+            },
+        ];
+        let s = update(s, Event::Insights(Ok(list))).0;
+        let b = render(&s, Theme::TrueColor);
+        // Room to spare: a short list, path first, message after.
+        let t = text(&b);
+        assert!(
+            t.contains("Cleanup hints  dredge never runs these")
+                && t.contains("c copy the first")
+                && t.contains("\u{25c6} 150.0 MiB  /data/proj/node_modules/  Node dependencies")
+                && t.contains("\u{25c6}   1.0 MiB  /elsewhere/  other"),
+            "{t}"
+        );
+        // Short terminal: one line, the top hint only.
+        let short = update(s.clone(), Event::Resize(80, 14)).0;
+        let hint = row_with(&render(&short, Theme::TrueColor), "\u{25c6} 150.0 MiB").unwrap();
+        assert!(
+            hint.contains("Node dependencies")
+                && hint.contains("node_modules")
+                && hint.contains("c copy   i 1 more"),
+            "{hint}"
+        );
+        let nm = row_with(&b, " 1  \u{2501}").unwrap();
+        assert!(nm.contains("/data/proj/node_modules/"), "{nm}");
+        assert!(nm.contains("\u{25c6} reclaimable"), "{nm}");
+        let target = row_with(&b, "/data/proj/target").unwrap();
+        assert!(!target.contains("reclaimable"), "{target}");
+        let s = update(s, Event::Insights(Ok(vec![]))).0;
+        let t = text(&render(&s, Theme::TrueColor));
+        assert!(t.contains("no cleanup hints for this path"), "{t}");
+    }
+
+    #[test]
+    fn stale_snapshot_is_flagged_in_the_header() {
+        let mut o = overview();
+        o.age_secs = 9 * 86_400;
+        let s = update(State::new("/data", (80, 24)), Event::Overview(Ok(Some(o)))).0;
+        let b = render(&s, Theme::TrueColor);
+        let head = text(&b).lines().next().unwrap().to_string();
+        assert!(head.contains("! scanned 9 days ago"), "{head}");
+    }
+
+    #[test]
+    fn scanning_screen_is_honest_about_progress() {
+        let scan = |expected: Option<u64>| {
+            let s = press(loaded((80, 24)), Key::Char('r'));
+            let p = Progress {
+                files: 120_000,
+                dirs: 9_000,
+                bytes: 300 << 20,
+                errors: 2,
+                elapsed_ms: 4_000,
+                threads: 2,
+                expected_bytes: expected,
+            };
+            text(&render(&update(s, Event::Progress(p)).0, Theme::TrueColor))
+        };
+        let t = scan(Some(600 << 20));
+        for want in [
+            "Scanning /data",
+            "300.0 MiB  read so far",
+            "120,000 files \u{b7} 9,000 folders \u{b7} 4.0s \u{b7} 30,000 files/s",
+            "! 2 folders could not be read so far",
+            "50%",
+            "about 4.0s left",
+            "reading with 2 threads",
+            "the snapshot from 2 h ago stays in use",
+            "esc cancel scan",
+            "b browse last snapshot",
+        ] {
+            assert!(t.contains(want), "missing {want:?} in:\n{t}");
+        }
+        let t = scan(None);
+        assert!(t.contains("no percentage") && !t.contains("50%"), "{t}");
+        // Past the expected total the bar holds at 99% instead of claiming done.
+        let t = scan(Some(100 << 20));
+        assert!(t.contains("99%"), "{t}");
     }
 
     #[test]
@@ -1162,13 +1845,16 @@ mod tests {
                 )
                 .0;
                 let help = press(base.clone(), Key::Char('?'));
-                let mut scanning = base.clone();
-                scanning = update(
-                    scanning,
+                let scanning = update(
+                    press(base.clone(), Key::Char('r')),
                     Event::Progress(Progress {
                         files: 9,
                         dirs: 2,
                         bytes: 5,
+                        errors: 1,
+                        elapsed_ms: 4000,
+                        threads: 2,
+                        expected_bytes: Some(20),
                     }),
                 )
                 .0;
@@ -1195,10 +1881,14 @@ mod tests {
             t.contains("No snapshot for /data yet.") && t.contains("Press r to scan"),
             "{t}"
         );
-        assert!(t.contains("r scan"), "{t}");
+        assert!(t.contains("r scan") && t.contains("no snapshot"), "{t}");
         let s = press(s, Key::Char('r'));
         let t = text(&render(&s, Theme::TrueColor));
-        assert!(t.contains("scanning: 0 files"), "{t}");
+        assert!(
+            t.contains("Scanning /data") && t.contains("results appear when the scan finishes"),
+            "{t}"
+        );
+        assert!(!t.contains("browse last snapshot"), "{t}");
     }
 
     #[test]
@@ -1218,18 +1908,19 @@ mod tests {
         o.free_bytes = None;
         let s = update(State::new("/data", (80, 24)), Event::Overview(Ok(Some(o)))).0;
         let t = text(&render(&s, Theme::TrueColor));
-        assert!(t.contains("0% of used"), "{t}");
+        assert!(t.contains("0.0% of disk"), "{t}");
     }
 
     #[test]
     fn plain_theme_uses_glyph_bar_without_colors() {
         let b = render(&loaded((40, 12)), Theme::Plain);
-        let row1: String = (0..40).map(|x| b[(x, 1)].symbol().to_string()).collect();
+        // 10 body rows: no spare line, so the bar sits right under the totals.
+        let row: String = (0..40).map(|x| b[(x, 2)].symbol().to_string()).collect();
         assert!(
-            row1.contains('=') && row1.contains('+') && !row1.contains('\u{2580}'),
-            "{row1}"
+            row.contains('=') && row.contains('+') && !row.contains('\u{2580}'),
+            "{row}"
         );
-        assert_eq!(b[(0, 1)].fg, Color::Reset);
+        assert_eq!(b[(2, 2)].fg, Color::Reset);
     }
 
     #[test]
@@ -1238,7 +1929,7 @@ mod tests {
         let b = render(&s, Theme::TrueColor);
         let last: String = (0..80).map(|x| b[(x, 23)].symbol().to_string()).collect();
         assert!(last.contains("boom: gone"));
-        assert_eq!(b[(0, 23)].fg, Color::Red);
+        assert_eq!(b[(2, 23)].fg, Color::Red);
     }
 
     fn big_listing(n: usize) -> Listing {
@@ -1318,8 +2009,9 @@ mod tests {
         }
     }
 
+    /// First body row containing `needle` (the header row is skipped).
     fn row_with(b: &Buffer, needle: &str) -> Option<String> {
-        (0..b.area.height)
+        (1..b.area.height)
             .map(|y| {
                 (0..b.area.width)
                     .map(|x| b[(x, y)].symbol().to_string())

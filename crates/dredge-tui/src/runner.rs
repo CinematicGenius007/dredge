@@ -63,24 +63,15 @@ pub fn load_overview(engine: &Engine, root: &str) -> Result<Option<Overview>, St
         Err(Error::NoSnapshot { .. }) => return Ok(None),
         Err(e) => return Err(e.to_string()),
     };
-    let (mut total, mut free) = (None, None);
-    if let Output::Volumes(v) = engine.run(&Query::Volumes) {
-        let canon = std::fs::canonicalize(root).ok();
-        if let Some(r) = v.records.iter().find(|r| {
-            canon
-                .as_deref()
-                .is_some_and(|c| c == std::path::Path::new(&r.mount))
-        }) {
-            total = Some(r.total_bytes);
-            free = Some(r.free_bytes);
-        }
-    }
+    let vol = volume_of(engine, root);
     Ok(Some(Overview {
         path: cats.summary.path.clone(),
         used_bytes: cats.summary.allocated_bytes,
         used_human: cats.summary.human.clone(),
-        total_bytes: total,
-        free_bytes: free,
+        total_bytes: vol.as_ref().map(|v| v.total),
+        free_bytes: vol.as_ref().map(|v| v.free),
+        label: vol.as_ref().and_then(|v| v.label.clone()),
+        fs: vol.as_ref().map(|v| v.fs.clone()),
         age_secs: cats.snapshot.as_ref().map_or(0, |s| s.age_secs),
         cats: cats
             .records
@@ -93,9 +84,40 @@ pub fn load_overview(engine: &Engine, root: &str) -> Result<Option<Overview>, St
                 share: r.share,
                 files: r.files,
                 top: r.top.clone(),
+                top_bytes: engine
+                    .sizes_within(root, &r.top)
+                    .map(|v| v.into_iter().map(Option::unwrap_or_default).collect())
+                    .unwrap_or_default(),
             })
             .collect(),
     }))
+}
+
+/// The volume a root is the mount point of. Not set for a folder inside a volume, whose
+/// capacity would be misleading next to the folder's own size.
+struct Volume {
+    total: u64,
+    free: u64,
+    used: u64,
+    label: Option<String>,
+    fs: String,
+}
+
+fn volume_of(engine: &Engine, root: &str) -> Option<Volume> {
+    let Output::Volumes(v) = engine.run(&Query::Volumes) else {
+        return None;
+    };
+    let canon = std::fs::canonicalize(root).ok()?;
+    v.records
+        .iter()
+        .find(|r| canon == std::path::Path::new(&r.mount))
+        .map(|r| Volume {
+            total: r.total_bytes,
+            free: r.free_bytes,
+            used: r.used_bytes,
+            label: r.label.clone(),
+            fs: r.fs.clone(),
+        })
 }
 
 fn entry(r: &EntryRecord) -> Entry {
@@ -264,6 +286,9 @@ pub fn translate_key(code: KeyCode, mods: KeyModifiers) -> Option<Key> {
 struct ScanJob {
     progress: Arc<ScanProgress>,
     done: Receiver<Result<(), String>>,
+    started: Instant,
+    threads: usize,
+    expected_bytes: Option<u64>,
 }
 
 impl Drop for ScanJob {
@@ -281,9 +306,11 @@ fn spawn_scan(engine: Arc<Engine>, scanner: Arc<dyn Scanner>, root: String) -> S
     let progress = Arc::new(ScanProgress::default());
     let (tx, rx) = mpsc::channel();
     let p = progress.clone();
+    let threads = low_priority_threads();
+    let expected_bytes = volume_of(&engine, &root).map(|v| v.used);
     std::thread::spawn(move || {
         let opts = ScanOptions {
-            threads: Some(low_priority_threads()),
+            threads: Some(threads),
         };
         let r = engine
             .scan(scanner.as_ref(), &root, &opts, &p)
@@ -291,15 +318,25 @@ fn spawn_scan(engine: Arc<Engine>, scanner: Arc<dyn Scanner>, root: String) -> S
             .map_err(|e| e.to_string());
         let _ = tx.send(r);
     });
-    ScanJob { progress, done: rx }
+    ScanJob {
+        progress,
+        done: rx,
+        started: Instant::now(),
+        threads,
+        expected_bytes,
+    }
 }
 
-fn progress_of(p: &ScanProgress) -> Progress {
-    let s = p.snapshot();
+fn progress_of(j: &ScanJob) -> Progress {
+    let s = j.progress.snapshot();
     Progress {
         files: s.files,
         dirs: s.dirs,
         bytes: s.allocated_bytes,
+        errors: s.errors,
+        elapsed_ms: j.started.elapsed().as_millis() as u64,
+        threads: j.threads,
+        expected_bytes: j.expected_bytes,
     }
 }
 
@@ -326,6 +363,8 @@ pub fn run(engine: Arc<Engine>, scanner: Arc<dyn Scanner>, root: String) -> Resu
     let mut dirty = true;
     let mut quit = false;
     let mut last_progress = Instant::now();
+    // Cleanup hints can take a moment on a big snapshot: fetch them after the frame is drawn.
+    let mut want_insights = false;
 
     while !quit {
         // Apply everything queued, collecting effects and follow-up events.
@@ -341,16 +380,17 @@ pub fn run(engine: Arc<Engine>, scanner: Arc<dyn Scanner>, root: String) -> Resu
                         break;
                     }
                     Effect::Browse(p) => queue.push_back(Event::Browsed(load_browse(&engine, &p))),
-                    Effect::Insights => {
-                        queue.push_back(Event::Insights(load_insights(&engine, &state.root)));
+                    Effect::Insights => want_insights = true,
+                    Effect::CancelScan => {
+                        // Dropping the job cancels it; a cancelled scan saves nothing.
+                        job = None;
                     }
                     Effect::Scan => {
                         if job.is_none() {
-                            job = Some(spawn_scan(
-                                engine.clone(),
-                                scanner.clone(),
-                                state.root.clone(),
-                            ));
+                            let j = spawn_scan(engine.clone(), scanner.clone(), state.root.clone());
+                            // Show threads and the expected size right away.
+                            queue.push_back(Event::Progress(progress_of(&j)));
+                            job = Some(j);
                             last_progress = Instant::now();
                         }
                     }
@@ -379,6 +419,10 @@ pub fn run(engine: Arc<Engine>, scanner: Arc<dyn Scanner>, root: String) -> Resu
         if dirty {
             terminal.draw(|f| draw(f, &state, theme))?;
             dirty = false;
+        }
+        if std::mem::take(&mut want_insights) {
+            queue.push_back(Event::Insights(load_insights(&engine, &state.root)));
+            continue;
         }
 
         // Block on input; while a scan runs, wake every 100 ms for progress and completion.
@@ -409,7 +453,7 @@ pub fn run(engine: Arc<Engine>, scanner: Arc<dyn Scanner>, root: String) -> Resu
                 }
                 Err(TryRecvError::Empty) => {
                     if last_progress.elapsed() >= Duration::from_millis(100) {
-                        queue.push_back(Event::Progress(progress_of(&j.progress)));
+                        queue.push_back(Event::Progress(progress_of(j)));
                         last_progress = Instant::now();
                     }
                 }
@@ -461,6 +505,9 @@ mod tests {
         drop(ScanJob {
             progress: progress.clone(),
             done,
+            started: Instant::now(),
+            threads: 1,
+            expected_bytes: None,
         });
         assert!(progress.cancelled());
     }
