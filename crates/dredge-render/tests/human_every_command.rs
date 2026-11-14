@@ -137,7 +137,7 @@ fn strip(s: &str) -> String {
 
 #[test]
 fn every_command_follows_the_skeleton() {
-    let root = tempfile::tempdir().unwrap();
+    let root = fixture_root();
     let data = tempfile::tempdir().unwrap();
     let root_s = root.path().to_string_lossy().to_string();
     for (name, out) in outputs(&root_s, data.path()) {
@@ -186,7 +186,7 @@ fn every_command_follows_the_skeleton() {
 
 #[test]
 fn commands_lead_with_their_answer() {
-    let root = tempfile::tempdir().unwrap();
+    let root = fixture_root();
     let data = tempfile::tempdir().unwrap();
     let root_s = root.path().to_string_lossy().to_string();
     let render = |out: &Output| -> String {
@@ -236,4 +236,10 @@ fn errors_say_what_failed_and_how_to_fix_it() {
         lines[0].as_str()
     );
     assert!(lines.len() >= 2, "a fix line follows: {lines:?}");
+}
+
+/// A fixture root outside the OS temp folder: on Windows that is under `AppData`, where dredge
+/// rightly never suggests removing `node_modules` (apps ship them prebuilt).
+fn fixture_root() -> tempfile::TempDir {
+    tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
 }
