@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>dredge: see what is using your disk space, read-only (CLI + MCP)</title>
+<meta name="description" content="dredge is a free, open-source, read-only disk space explorer for macOS, Linux and Windows. Scan once, then see what is big, what rebuilds itself, and the command to clear it. It never deletes anything. Includes an MCP server for AI agents.">
+<link rel="canonical" href="%SITE_URL%/">
+<meta name="theme-color" content="#121314">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="index, follow, max-image-preview:large">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="dredge">
+<meta property="og:title" content="dredge: where did your disk go?">
+<meta property="og:description" content="A read-only disk space explorer for the terminal. Scan once, ask all day. It points at what you can clear and prints the command. It never deletes anything.">
+<meta property="og:url" content="%SITE_URL%/">
+<meta property="og:image" content="%SITE_URL%/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="dredge: a dithered bar of disk space by category, with the line: Where did your disk go?">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="dredge: where did your disk go?">
+<meta name="twitter:description" content="A read-only disk space explorer for the terminal, with an MCP server for AI agents.">
+<meta name="twitter:image" content="%SITE_URL%/og.png">
+
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="alternate" type="text/markdown" href="/llms-full.txt" title="dredge documentation for language models">
+
+<script src="/theme.js"></script>
+<link rel="preload" href="/fonts/jetbrains-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<script src="/app.js" type="module"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "%SITE_URL%/#app",
+      "name": "dredge",
+      "description": "A read-only disk space explorer. It scans a disk once, saves a snapshot, and answers what is using space, what rebuilds itself, and the command to clear it. It never deletes, moves or modifies files. It ships a command-line tool and a stdio MCP server for AI agents.",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Disk space analyzer",
+      "operatingSystem": "macOS, Linux, Windows",
+      "softwareVersion": "0.2.0",
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "url": "%SITE_URL%/",
+      "downloadUrl": "https://github.com/CinematicGenius007/dredge",
+      "installUrl": "%SITE_URL%/#install",
+      "screenshot": "%SITE_URL%/og.png",
+      "featureList": [
+        "Read-only: never deletes, moves or modifies your files",
+        "Scan once, then instant answers from a saved snapshot",
+        "Space by folder, file, extension and category",
+        "Cleanup hints for space that rebuilds itself, with the command as text",
+        "Readable terminal view, JSON when piped",
+        "MCP server for Claude and other AI agents",
+        "No network connections, no telemetry"
+      ]
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "%SITE_URL%/#source",
+      "name": "dredge",
+      "codeRepository": "https://github.com/CinematicGenius007/dredge",
+      "programmingLanguage": "Rust",
+      "license": "https://opensource.org/licenses/MIT",
+      "targetProduct": { "@id": "%SITE_URL%/#app" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "%SITE_URL%/#site",
+      "url": "%SITE_URL%/",
+      "name": "dredge",
+      "inLanguage": "en"
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<svg class="sprite" width="0" height="0" aria-hidden="true">
+  <symbol id="i-copy" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M5.5 5.5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"/><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M11.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m3 8.5 3.2 3L13 4.5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" d="M6.5 3.5h-3v9h9v-3M9.5 2.5h4v4M13.5 2.5 7.5 8.5"/></symbol>
+</svg>
+<input type="file" id="pick" webkitdirectory directory multiple hidden>
+
+<div class="term" id="term">
+  <header class="titlebar">
+    <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="title">visitor@dredge: ~</span>
+    <button type="button" class="tb-btn" id="hud-btn" aria-expanded="true" aria-controls="hud" title="Show or hide the disk bar"><span class="hb" aria-hidden="true"></span><span class="tb-label">bar</span></button>
+    <div class="themes">
+      <button type="button" class="tb-btn" id="theme-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu" title="Terminal theme"><span class="sw" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span id="theme-name" class="tb-label">theme</span></button>
+      <ul class="theme-menu" id="theme-menu" role="listbox" aria-label="Terminal theme" tabindex="-1" hidden></ul>
+    </div>
+    <a class="tb-link" href="https://github.com/CinematicGenius007/dredge" rel="noopener">source<svg><use href="#i-ext"/></svg></a>
+  </header>
+
+  <figure class="hud" id="hud" aria-label="Sample disk usage by category">
+    <div class="hud-in">
+    <canvas id="hud-bar" aria-hidden="true"></canvas>
+    <figcaption class="hud-row">
+      <p class="pointer" id="pointer"><span class="tree">└</span> <b class="seg-name">~/</b> <span class="seg-size">455.6 GiB</span> <span class="seg-note">hover a color</span></p>
+      <ul class="legend" id="legend" aria-label="Categories"></ul>
+    </figcaption>
+    </div>
+  </figure>
+
+  <main class="out" id="out" tabindex="-1">
+    <div class="boot">
+      <h1 class="line"><b>dredge</b> <span class="f">v0.2.0</span> <span class="d">·</span> where did your disk go?</h1>
+      <p class="line f">A read-only disk explorer for macOS, Linux and Windows. It reads your disk once, saves a snapshot, <br>and answers in one screen: what is big, what rebuilds itself, and the command to clear it. <br>It never deletes anything. It also runs as an MCP server for Claude and other agents.</p>
+
+      <div id="install"><pre class="line"><code>cargo install --git https://github.com/CinematicGenius007/dredge dredge-cli</code></pre></div>
+
+      <nav class="menu" aria-label="Commands">
+        <p class="f">Commands. Click one, or type it below.</p>
+        <ul>
+          <li><a href="#tutorial" data-run="tutorial">tutorial</a><span>six steps from install to MCP, about two minutes</span></li>
+          <li><a href="#demo" data-run="demo">demo</a><span>read a folder of yours in this tab; nothing is uploaded</span></li>
+          <li><a href="#mcp" data-run="mcp">mcp</a><span>add dredge to Claude Code, Claude Desktop, Cursor or any MCP client</span></li>
+          <li><a href="#rules" data-run="rules">rules</a><span>what dredge will and will never do</span></li>
+          <li><a href="#help" data-run="help">help</a><span>everything else this shell understands</span></li>
+        </ul>
+      </nav>
+      <noscript><p class="line w">This shell needs JavaScript. The same content is at <a href="/llms-full.txt">/llms-full.txt</a>.</p></noscript>
+    </div>
+    <div id="log" aria-live="polite"></div>
+  </main>
+
+  <form class="prompt" id="prompt" autocomplete="off">
+    <div class="chips" id="chips"></div>
+    <div class="input-row">
+      <label for="cmd" class="ps1"><span class="u">visitor@dredge</span> <span class="p">~</span> $</label>
+      <input id="cmd" name="cmd" spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go" aria-describedby="keys">
+    </div>
+  </form>
+
+  <footer class="status">
+    <span class="sess">dredge</span>
+    <nav class="wins" aria-label="Windows">
+      <a href="#tutorial" data-run="tutorial"><b>0</b> tutorial</a>
+      <a href="#demo" data-run="demo"><b>1</b> demo</a>
+      <a href="#mcp" data-run="mcp"><b>2</b> mcp</a>
+      <a href="#install" data-run="install"><b>3</b> install</a>
+    </nav>
+    <span class="progress" id="progress" hidden></span>
+    <span class="keys" id="keys">↵ run · tab completes · ↑ history</span>
+  </footer>
+  <div class="dropover" aria-hidden="true"><p><b>Drop to read it here</b><br><span class="f">sizes and names only · nothing is uploaded</span></p></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,33 @@
+
+  dredge · a read-only disk explorer · CLI + MCP · macOS, Linux, Windows
+
+  Where did your disk go?
+
+  ⢕⢅⢕⢅⢕⢅⢕⢅⢕⢅⢕⢅⢕⢅⢕⢅⢕⢅⢕⢅⢕⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄⠁⠄
+  ⢝⢵⢝⢵⢝⢵⢝⢵⢝⢵⢝⢵⢝⢵⢝⢵⢝⢵⢝⢵⢝⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅⠕⢅
+  ⣿⣽⣿⣽⣿⣽⣿⣽⣿⣽⣿⣽⣿⣽⣿⣽⣿⣽⣿⣽⣿⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕⠕⢕
+  └ Developer 152.8 GiB · 34%   (a sample home folder, 455.6 GiB)
+
+  dredge reads your disk once, saves a snapshot, and answers in one screen:
+  what is big, what rebuilds itself, and the command to clear it.
+  It never deletes anything.
+
+  1  Install       cargo install --git https://github.com/CinematicGenius007/dredge dredge-cli
+  2  Scan once     dredge scan ~
+  3  Browse        dredge browse ~
+  4  Insights      dredge insights ~        ◆ space that rebuilds itself, with the command
+  5  At a glance   dredge bar ~ --focus developer
+  6  Your agent    claude mcp add dredge --scope user -- dredge mcp
+
+  Rules
+    ✓ read-only: writes and removes only its own snapshot files
+    ✓ suggests, never acts: cleanup commands are printed as text
+    ✓ local only: no network, no telemetry, no symlinks followed
+    ✓ every answer names its snapshot's age
+    ✓ pipes get JSON; terminals get the readable view
+
+  Source  https://github.com/CinematicGenius007/dredge   (MIT)
+  More    curl %SITE_URL%/llms-full.txt
+
+  Next  cargo install --git https://github.com/CinematicGenius007/dredge dredge-cli
+
