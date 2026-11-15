@@ -77,7 +77,13 @@ button { font: inherit; color: inherit; }
 .tb-link svg { width: 12px; height: 12px; }
 
 /* HUD: the dredge bar, pinned to the top like the TUI header. */
-.hud { margin: 0; padding: 14px 20px 8px; border-bottom: 1px solid var(--line); }
+/* Folds away (button in the title bar, and on its own after the first command). */
+.hud { display: grid; grid-template-rows: 1fr; margin: 0; padding: 14px 20px 8px; border-bottom: 1px solid var(--line); transition: grid-template-rows .45s cubic-bezier(.2, .7, .3, 1), padding .45s cubic-bezier(.2, .7, .3, 1), border-color .45s; }
+.hud-in { min-height: 0; overflow: hidden; transition: opacity .3s; }
+.term.hud-off .hud { grid-template-rows: 0fr; padding-top: 0; padding-bottom: 0; border-bottom-color: transparent; }
+.term.hud-off .hud-in { opacity: 0; }
+.hb { display: inline-block; width: 14px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--green) 0 35%, var(--pink) 35% 55%, var(--purple) 55% 72%, var(--blue) 72%); opacity: .9; }
+#hud-btn[aria-expanded="false"] .hb { opacity: .45; }
 #hud-bar { display: block; width: 100%; height: 64px; cursor: crosshair; touch-action: pan-y; }
 .hud-row { display: flex; align-items: center; justify-content: space-between; gap: 6px 20px; margin-top: 6px; min-height: 28px; }
 .pointer { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 320px; color: var(--faint); }
@@ -90,7 +96,7 @@ button { font: inherit; color: inherit; }
 .legend button:hover, .legend button.focus { color: var(--text); background: var(--panel); }
 .legend button[aria-pressed="true"] { color: var(--text); border-color: var(--c); }
 @media (max-width: 900px) { .hud-row { flex-direction: column; align-items: stretch; } .pointer { flex: none; } }
-@media (max-width: 640px) { .hud { padding: 10px 14px 6px; } #hud-bar { height: 44px; } }
+@media (max-width: 640px) { .term:not(.hud-off) .hud { padding: 10px 14px 6px; } #hud-bar { height: 44px; } }
 
 /* Scrollback */
 .out { position: relative; overflow-y: auto; overscroll-behavior: contain; padding: 18px 20px 12px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; outline: 0; }
@@ -105,7 +111,7 @@ button { font: inherit; color: inherit; }
 .cmdline { margin-top: 0; }
 /* One screen per command; older ones stay above, quieter. */
 .run { padding-top: 2px; transition: opacity .35s ease; }
-.run:last-child { animation: rise .32s cubic-bezier(.2, .7, .3, 1) both; }
+.run:last-child { animation: rise .5s cubic-bezier(.2, .7, .3, 1) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 .boot { transition: opacity .35s ease; }
 .run:last-child { min-height: calc(var(--screen, 100vh) - 12px); }
@@ -254,7 +260,7 @@ pre.xc-code code { display: block; width: max-content; min-width: 100%; }
 .keys { margin-left: auto; color: var(--dim); }
 @media (max-width: 640px) { .keys { display: none; } .progress span { display: none; } }
 
-@media (prefers-reduced-motion: reduce) { .run, .boot { transition: none; } .run:last-child { animation: none; } .in, .xc.copied .xc-cmd, .xc.copied pre.xc-code code { animation: none; } .tok { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .hud, .hud-in { transition: none; } .run, .boot { transition: none; } .run:last-child { animation: none; } .in, .xc.copied .xc-cmd, .xc.copied pre.xc-code code { animation: none; } .tok { transition: none; } }
 
 /* 404 */
 body.lost-page { overflow: auto; }

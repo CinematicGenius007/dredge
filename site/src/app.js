@@ -49,8 +49,7 @@ function human(bytes) {
   return i === 0 ? `${v} B` : `${v.toFixed(1)} ${u[i]}`;
 }
 
-// A canvas of dots in dredge's ramp: sparse at the top, solid at the bottom, the focused
-// segment densest. It is still until you point at it; a focus change starts at the pointer's
+// A canvas of dots, one even dither per segment: the focused segment solid, the rest lighter. It is still until you point at it; a focus change starts at the pointer's
 // column and spreads outward quickly.
 class DotField {
   static all = new Set();
@@ -126,7 +125,6 @@ class DotField {
   draw() {
     const { ctx, cols, rows, pitch, radius, ox, oy } = this;
     ctx.clearRect(0, 0, this.c.width, this.c.height);
-    const last = Math.max(1, rows - 1);
     let color = null;
     for (let x = 0; x < cols; x++) {
       const s = this.segAt[x];
@@ -134,7 +132,7 @@ class DotField {
       if (c !== color) { if (color) ctx.fill(); ctx.fillStyle = color = c; ctx.beginPath(); }
       const lvl = this.cur[x];
       for (let y = 0; y < rows; y++) {
-        const d = Math.min(16, (lvl * (last + 3 * y)) / (4 * last));
+        const d = lvl;
         if (BAYER[y & 3][x & 3] < d) { const px = ox + x * pitch, py = oy + y * pitch; ctx.moveTo(px + radius, py); ctx.arc(px, py, radius, 0, 6.2832); }
       }
     }
@@ -513,7 +511,14 @@ const hud = (() => {
     if (seg >= 0) pin(seg, col);
   });
   load(SAMPLE, "~/", "a sample home folder · hover a color");
-  return { load };
+
+  // The bar folds away from the title bar button, and by itself after the first command,
+  // unless you opened or closed it yourself.
+  const term = document.getElementById("term"), btn = document.getElementById("hud-btn");
+  let chosen = false;
+  const fold = (off) => { term.classList.toggle("hud-off", off); btn.setAttribute("aria-expanded", String(!off)); };
+  btn.addEventListener("click", () => { chosen = true; fold(!term.classList.contains("hud-off")); });
+  return { load, autoHide() { if (!chosen) fold(true); } };
 })();
 
 // ------------------------------------------------------------------------------------------
@@ -530,7 +535,7 @@ const pick = document.getElementById("pick");
 
 // Each command gets its own screen: a section at least as tall as the scrollback, scrolled to
 // the top. Earlier commands stay above it (scroll up to see them), dimmed.
-new ResizeObserver(() => out.style.setProperty("--screen", `${out.clientHeight}px`)).observe(out);
+new ResizeObserver(() => { out.style.setProperty("--screen", `${out.clientHeight}px`); o.scroll(); }).observe(out);
 for (const ev of ["wheel", "touchstart"]) out.addEventListener(ev, () => { cancelAnimationFrame(o.glide); o.glide = 0; }, { passive: true });
 const o = {
   run: null,
@@ -545,12 +550,12 @@ const o = {
     this.slide();
   },
   target() { return this.run ? this.run.offsetTop - parseFloat(getComputedStyle(out).paddingTop) : out.scrollTop; },
-  // Enter glides the new command up to the top: 360ms, easing out. A wheel or touch stops it.
+  // Enter glides the new command up to the top: 560ms, easing out. A wheel or touch stops it.
   slide() {
     cancelAnimationFrame(this.glide);
     const from = out.scrollTop, to = this.target();
     if (REDUCED || Math.abs(to - from) < 2) { out.scrollTop = to; return; }
-    const t0 = performance.now(), D = 360;
+    const t0 = performance.now(), D = 560;
     const step = (now) => {
       const p = Math.min(1, (now - t0) / D);
       out.scrollTop = from + (to - from) * (1 - (1 - p) ** 3);
@@ -646,7 +651,7 @@ const STEPS = [
   },
   {
     cmd: "dredge bar ~ --focus developer", title: "See it at a glance",
-    about: "bar draws space by category in braille dots, on your terminal's own background. It is the bar at the top of this page; dredge tui is the interactive version.",
+    about: "bar draws space by category in braille dots, on your terminal's own background. It is the bar this page opens with (the bar button brings it back); dredge tui is the interactive version.",
     async run() {
       const c = document.createElement("canvas"); c.className = "bar";
       o.html("").append(c);
@@ -763,6 +768,7 @@ async function exec(raw, { typed = false } = {}) {
     input.value = "";
     if (!cmd) return;
     hist.push(cmd); hi = hist.length;
+    hud.autoHide();
     o.screen(`<span class="u">visitor@dredge</span> <span class="p">~</span> $ ${esc(cmd)}`);
     await dispatch(cmd);
   } finally {

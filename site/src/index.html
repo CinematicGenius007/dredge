@@ -96,6 +96,7 @@
   <header class="titlebar">
     <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
     <span class="title">visitor@dredge: ~</span>
+    <button type="button" class="tb-btn" id="hud-btn" aria-expanded="true" aria-controls="hud" title="Show or hide the disk bar"><span class="hb" aria-hidden="true"></span>bar</button>
     <div class="themes">
       <button type="button" class="tb-btn" id="theme-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu" title="Terminal theme"><span class="sw" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span id="theme-name">theme</span></button>
       <ul class="theme-menu" id="theme-menu" role="listbox" aria-label="Terminal theme" tabindex="-1" hidden></ul>
@@ -103,12 +104,14 @@
     <a class="tb-link" href="https://github.com/CinematicGenius007/dredge" rel="noopener">source<svg><use href="#i-ext"/></svg></a>
   </header>
 
-  <figure class="hud" aria-label="Sample disk usage by category">
+  <figure class="hud" id="hud" aria-label="Sample disk usage by category">
+    <div class="hud-in">
     <canvas id="hud-bar" aria-hidden="true"></canvas>
     <figcaption class="hud-row">
       <p class="pointer" id="pointer"><span class="tree">└</span> <b class="seg-name">~/</b> <span class="seg-size">455.6 GiB</span> <span class="seg-note">hover a color</span></p>
       <ul class="legend" id="legend" aria-label="Categories"></ul>
     </figcaption>
+    </div>
   </figure>
 
   <main class="out" id="out" tabindex="-1">
