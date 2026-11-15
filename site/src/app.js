@@ -531,17 +531,34 @@ const pick = document.getElementById("pick");
 // Each command gets its own screen: a section at least as tall as the scrollback, scrolled to
 // the top. Earlier commands stay above it (scroll up to see them), dimmed.
 new ResizeObserver(() => out.style.setProperty("--screen", `${out.clientHeight}px`)).observe(out);
+for (const ev of ["wheel", "touchstart"]) out.addEventListener(ev, () => { cancelAnimationFrame(o.glide); o.glide = 0; }, { passive: true });
 const o = {
   run: null,
   wait: (ms) => new Promise((r) => setTimeout(r, REDUCED ? 0 : ms)),
+  glide: 0,
   screen(cmdHtml) {
     const sec = document.createElement("section");
     sec.className = "run";
     log.append(sec);
     this.run = sec;
     this.line(cmdHtml, "cmdline");
+    this.slide();
   },
-  scroll() { if (this.run) out.scrollTop = this.run.offsetTop - parseFloat(getComputedStyle(out).paddingTop); },
+  target() { return this.run ? this.run.offsetTop - parseFloat(getComputedStyle(out).paddingTop) : out.scrollTop; },
+  // Enter glides the new command up to the top: 360ms, easing out. A wheel or touch stops it.
+  slide() {
+    cancelAnimationFrame(this.glide);
+    const from = out.scrollTop, to = this.target();
+    if (REDUCED || Math.abs(to - from) < 2) { out.scrollTop = to; return; }
+    const t0 = performance.now(), D = 360;
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / D);
+      out.scrollTop = from + (to - from) * (1 - (1 - p) ** 3);
+      this.glide = p < 1 ? requestAnimationFrame(step) : 0;
+    };
+    this.glide = requestAnimationFrame(step);
+  },
+  scroll() { if (this.run && !this.glide) out.scrollTop = this.target(); },
   line(html = "", cls = "") {
     const p = document.createElement("p");
     p.className = `line in ${cls}`.trim(); p.innerHTML = html || "&nbsp;";

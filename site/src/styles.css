@@ -104,7 +104,10 @@ button { font: inherit; color: inherit; }
 @keyframes fade-in { from { opacity: 0; } }
 .cmdline { margin-top: 0; }
 /* One screen per command; older ones stay above, quieter. */
-.run { padding-top: 2px; }
+.run { padding-top: 2px; transition: opacity .35s ease; }
+.run:last-child { animation: rise .32s cubic-bezier(.2, .7, .3, 1) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+.boot { transition: opacity .35s ease; }
 .run:last-child { min-height: calc(var(--screen, 100vh) - 12px); }
 .run:not(:last-child) { opacity: .5; padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px dashed var(--line); }
 .run:not(:last-child):hover { opacity: 1; }
@@ -251,7 +254,7 @@ pre.xc-code code { display: block; width: max-content; min-width: 100%; }
 .keys { margin-left: auto; color: var(--dim); }
 @media (max-width: 640px) { .keys { display: none; } .progress span { display: none; } }
 
-@media (prefers-reduced-motion: reduce) { .in, .xc.copied .xc-cmd, .xc.copied pre.xc-code code { animation: none; } .tok { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .run, .boot { transition: none; } .run:last-child { animation: none; } .in, .xc.copied .xc-cmd, .xc.copied pre.xc-code code { animation: none; } .tok { transition: none; } }
 
 /* 404 */
 body.lost-page { overflow: auto; }
