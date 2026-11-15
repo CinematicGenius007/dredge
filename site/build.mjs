@@ -3,8 +3,9 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, extname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL(".", import.meta.url).pathname;
+const root = fileURLToPath(new URL(".", import.meta.url));
 const src = join(root, "src"), dist = join(root, "dist");
 const url = (process.env.SITE_URL ||
   "https://dredge.cinematicgenius007.com")

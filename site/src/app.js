@@ -724,7 +724,8 @@ const HELP = [
 const COMMANDS = {
   help() { o.html(kv(HELP, true)); o.line(sp("f", "Tab completes, ↑ recalls, and any tutorial command works on its own, such as dredge browse ~.")); },
   async tutorial() { done.clear(); setStep(0); await o.lines([`${sp("ok", "✓")} six steps · press ↵ to run each one, or type it yourself`]); },
-  next() { return exec(STEPS[Math.max(0, step)].cmd); },
+  // Already inside exec, so dispatch the step directly rather than queueing another exec.
+  next() { return dispatch(STEPS[Math.max(0, step)].cmd); },
   install() {
     o.html(card(INSTALL_CARD));
     o.line(next("dredge scan ~", "then read your home folder once"));
@@ -908,22 +909,26 @@ const demo = (() => {
   async function read(source, name) {
     if (busyRead) return;
     busyRead = true;
+    let mine = null;
     try {
       const m = await load();
       setWindow("demo");
       o.screen(`<span class="u">visitor@dredge</span> <span class="p">~</span> $ dredge scan ${esc(name)}  ${sp("d", "# in this tab")}`);
+      mine = o.run;
       const live = o.line(`${sp("k", "⠋")} reading…`);
       const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
       let f = 0;
       const t0 = performance.now();
       const progressFn = (n) => { live.innerHTML = `${sp("k", frames[f++ % 10])} reading ${n.toLocaleString()} files…`; };
       const files = source.list ? await m.readFiles(source.list, progressFn) : await m.readEntries(source.entries, progressFn);
+      // Another command (or clear) ran while the folder was being read: drop the results.
+      if (o.run !== mine) return;
       if (!files.length) { live.innerHTML = `${sp("e", "✗")} that folder is empty`; return; }
       const r = m.analyze(files);
       live.remove();
       render(r, (performance.now() - t0) / 1000);
     } catch (err) {
-      o.line(`${sp("e", "✗")} could not read that folder: ${esc(err?.message || err)}`);
+      if (o.run === mine) o.line(`${sp("e", "✗")} could not read that folder: ${esc(err?.message || err)}`);
     } finally { busyRead = false; chips(); }
   }
 
