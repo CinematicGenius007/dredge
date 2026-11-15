@@ -7,7 +7,7 @@ import { join, extname } from "node:path";
 const root = new URL(".", import.meta.url).pathname;
 const src = join(root, "src"), dist = join(root, "dist");
 const url = (process.env.SITE_URL ||
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://dredge.vercel.app"))
+  "https://dredge.cinematicgenius007.com")
   .replace(/\/$/, "");
 const host = url.replace(/^https?:\/\//, "");
 

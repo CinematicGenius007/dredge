@@ -9,7 +9,7 @@ node build.mjs                      # src/ → dist/, fingerprints CSS/JS, fills
 cd dist && python3 -m http.server   # preview
 ```
 
-The site URL comes from `SITE_URL`, or from `VERCEL_PROJECT_PRODUCTION_URL` on Vercel. Set `SITE_URL` once a custom domain is attached, so the canonical URL, Open Graph tags and sitemap all use it.
+The site URL is `https://dredge.cinematicgenius007.com`, used for the canonical URL, Open Graph tags and sitemap. Set `SITE_URL` to override it, for example for a local preview.
 
 ## Deploy (Vercel)
 
