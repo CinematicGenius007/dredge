@@ -1,0 +1,22 @@
+# dredge
+
+> dredge is a free, open-source (MIT), read-only disk space explorer for macOS, Linux and Windows, written in Rust. It scans a folder or volume once, saves a compact snapshot, and answers questions about that snapshot instantly: what is big, what kind of data it is, and what space rebuilds itself. It prints cleanup commands as text and never runs them. It also runs as an MCP server so AI agents can ask the same questions.
+
+Key facts:
+- Install: `cargo install --git https://github.com/CinematicGenius007/dredge dredge-cli` (binary name: `dredge`). No prebuilt releases yet.
+- First run: `dredge scan ~`, then `dredge browse ~`, `dredge categories ~`, `dredge insights ~`, `dredge tui ~`.
+- Read-only: dredge writes and removes only its own snapshot files. It never deletes user files.
+- Local only: no network connections, no telemetry.
+- Output: a readable view on a terminal; one stable JSON document when piped or with `--json`.
+- MCP: `claude mcp add dredge --scope user -- dredge mcp` (Claude Code), or the stdio command `dredge mcp` in any MCP client.
+
+## Docs
+
+- [Full text of this site](%SITE_URL%/llms-full.txt): every tutorial step, command, MCP tool and FAQ answer in Markdown
+- [README](https://github.com/CinematicGenius007/dredge#readme): overview and command reference
+- [Install guide](https://github.com/CinematicGenius007/dredge/blob/main/docs/INSTALL.md): Cargo install and MCP setup for each client
+
+## Optional
+
+- [Source code](https://github.com/CinematicGenius007/dredge)
+- [Contributing](https://github.com/CinematicGenius007/dredge/blob/main/CONTRIBUTING.md)

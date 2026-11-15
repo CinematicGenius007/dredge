@@ -1,0 +1,5 @@
+# dredge.sh welcomes search engines and AI crawlers alike.
+User-agent: *
+Allow: /
+
+Sitemap: %SITE_URL%/sitemap.xml

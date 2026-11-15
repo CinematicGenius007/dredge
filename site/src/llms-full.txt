@@ -1,0 +1,99 @@
+# dredge: a read-only disk space explorer (CLI + MCP)
+
+> dredge is a free, open-source (MIT), read-only disk space explorer for macOS, Linux and Windows, written in Rust. It reads a folder or volume once, saves a compact snapshot, and answers questions about that snapshot instantly: what is big, what kind of data it is, and what space rebuilds itself. It prints cleanup commands as text and never runs them. It also runs as an MCP server for AI agents.
+
+Source: https://github.com/CinematicGenius007/dredge · Site: %SITE_URL%/
+
+## Install
+
+```sh
+cargo install --git https://github.com/CinematicGenius007/dredge dredge-cli
+```
+
+The package is `dredge-cli`; the binary is `dredge`. It needs Rust's Cargo (https://rustup.rs). There are no prebuilt releases yet.
+
+## Tutorial
+
+### 1. Scan once
+
+```sh
+dredge scan ~
+```
+
+`scan` walks a folder at low priority and saves a compact snapshot of about 6 bytes per entry. Nothing else on disk is written. Every question after this is instant. Example output:
+
+```
+✓ 455.6 GiB in ~/ · 6,712,408 files · 812,330 folders · 41.2s
+Next  dredge categories ~
+```
+
+### 2. Browse
+
+```sh
+dredge browse ~
+```
+
+Lists what is inside a folder, largest first: size, share, a bar, the path. It ends with the next command to run.
+
+```
+455.6 GiB in ~/ · 14 items, largest first
+
+      SIZE   SHARE              NAME
+ 148.2 GiB   32.5%  ━━━───────  ~/Projects/
+  96.4 GiB   21.2%  ━━────────  ~/Pictures/
+  71.9 GiB   15.8%  ━━────────  ~/Library/
+Next  dredge browse ~/Projects  go into the largest folder
+```
+
+### 3. Find what rebuilds itself
+
+```sh
+dredge insights ~
+```
+
+Points at space the owning tool re-creates: `node_modules` beside a lockfile, npm/Cargo/Gradle caches, Xcode DerivedData, per-user caches, the Trash. Each hint prints a command as text; dredge never runs it.
+
+```
+  18.4 GiB  ◆ ~/Library/Developer/Xcode/DerivedData/
+            Xcode build products and indexes; Xcode rebuilds them. Quit Xcode first.
+            $ find '/Users/you/Library/Developer/Xcode/DerivedData' -xdev -mindepth 1 -delete
+```
+
+Hints need at least 100 MiB.
+
+### 4. See it at a glance
+
+```sh
+dredge bar ~ --focus developer
+dredge tui ~
+```
+
+`bar` draws space by category (Apps, Developer, Photos, Movies, Documents, Music, System, Caches, Trash, Other, Free) in braille dots, dithered on the terminal's own background. `tui` is the interactive version.
+
+### 5. Hand it to your agent
+
+dredge includes a read-only stdio MCP server: `dredge mcp`.
+
+- Claude Code: `claude mcp add dredge --scope user -- dredge mcp`
+- Claude Desktop (`claude_desktop_config.json`): `{ "mcpServers": { "dredge": { "command": "/full/path/to/dredge", "args": ["mcp"] } } }`
+- Cursor (`~/.cursor/mcp.json`): `{ "mcpServers": { "dredge": { "command": "dredge", "args": ["mcp"] } } }`
+- Optional: `DREDGE_FOCUS_ROOTS` picks which folders agents scan.
+
+MCP tools: `disk_volumes` (free space, snapshot age), `disk_scan` (read a folder into a snapshot), `disk_job_status`, `disk_browse` (children, largest first), `disk_largest` (biggest files), `disk_types` (space by extension), `disk_categories` (space by kind), `disk_insights` (what could be cleared, as suggestions), `disk_detail` (one path), `disk_doctor` (read-only health checks).
+
+## Rules
+
+- Read-only: dredge writes, and on request removes, only its own snapshot files.
+- Suggests, never acts: a cleanup hint is a command printed as text. The CLI, TUI and MCP server never run it.
+- Local only: no network connections, no telemetry. It does not follow symlinks or download cloud placeholders.
+- Says how old it is: every answer names its snapshot's age; older than a week, it is flagged.
+- Answer first, next command last.
+- Pipes get JSON: on a terminal you get the readable view; piped or with `--json`, one stable JSON document.
+
+## Notes
+
+- dredge never deletes files. It prints commands for you to review and run yourself.
+- Compared with du, ncdu or DaisyDisk: it scans once and saves a snapshot, so later questions are instant; it groups space into categories, flags space that rebuilds itself with the command to clear it, prints JSON for scripts, and has an MCP server for agents.
+- Platforms: macOS, Linux and Windows. On macOS it reads directories in bulk with `getattrlistbulk`.
+- Privacy: no network connections, no telemetry. The website has no analytics or cookies; its folder demo runs in the browser.
+- Snapshot size: about 6 bytes per file or folder, so 8 million entries is close to 50 MB. `dredge snapshots` shows the total; `dredge forget --prune` removes unused ones.

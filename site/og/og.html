@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: Inter; src: url(fonts/inter-latin-wght-normal.woff2) format("woff2"); font-weight: 100 900; }
+@font-face { font-family: JBM; src: url(../src/fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2"); }
+@font-face { font-family: JBM; src: url(../src/fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2"); font-weight: 700; }
+html, body { margin: 0; width: 1200px; height: 630px; background: #0A151D; color: #E6ECEF; overflow: hidden; }
+.wrap { padding: 64px 72px; height: 630px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; }
+.top { display: flex; justify-content: space-between; font: 22px/1 JBM; color: #8FA1AD; }
+.top b { color: #E6ECEF; font-weight: 700; }
+h1 { font: 800 92px/0.98 Inter; letter-spacing: -0.05em; margin: 0; }
+canvas { width: 1056px; height: 120px; display: block; }
+.cap { font: 22px/1 JBM; color: #8FA1AD; }
+.cap b { color: #22C55E; }
+</style></head>
+<body><div class="wrap">
+<div class="top"><span><b>dredge</b> · read-only disk explorer</span><span>CLI + MCP</span></div>
+<h1>Where did your<br>disk go?</h1>
+<div><canvas id="c" width="2112" height="240"></canvas>
+<p class="cap">└ <b>Developer</b> 152.8 GiB · 34% &nbsp;·&nbsp; it never deletes anything</p></div>
+</div>
+<script>
+const B=[[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]];
+const ink=["#22C55E","#EC4899","#A855F7","#64748B","#3B82F6","#14B8A6","#F97316","#F59E0B","#EF4444"];
+const g=[152.8,88.4,61.2,54.6,41.7,23.9,19.6,9.3,4.1];
+const x=document.getElementById("c").getContext("2d"); x.scale(2,2);
+const P=7,cols=Math.floor(1056/P/2)*2,rows=Math.floor(120/P),last=rows-1,tot=g.reduce((a,b)=>a+b);
+let w=g.map(v=>Math.max(1,Math.floor(v/tot*cols/2))),l=cols/2-w.reduce((a,b)=>a+b),i=0;while(l-->0)w[i++%w.length]++;
+let c=0; w.forEach((n,k)=>{ x.fillStyle=ink[k]; x.beginPath(); for(let j=0;j<n*2;j++,c++) for(let y=0;y<rows;y++){
+ const d=Math.min(16,(k===0?16:7)*(last+3*y)/(4*last)); if(B[y%4][c%4]<d){x.moveTo(c*P+P/2+1.5,y*P+P/2);x.arc(c*P+P/2,y*P+P/2,1.5,0,7);} } x.fill(); });
+</script></body></html>
