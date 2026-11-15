@@ -96,9 +96,9 @@
   <header class="titlebar">
     <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
     <span class="title">visitor@dredge: ~</span>
-    <button type="button" class="tb-btn" id="hud-btn" aria-expanded="true" aria-controls="hud" title="Show or hide the disk bar"><span class="hb" aria-hidden="true"></span>bar</button>
+    <button type="button" class="tb-btn" id="hud-btn" aria-expanded="true" aria-controls="hud" title="Show or hide the disk bar"><span class="hb" aria-hidden="true"></span><span class="tb-label">bar</span></button>
     <div class="themes">
-      <button type="button" class="tb-btn" id="theme-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu" title="Terminal theme"><span class="sw" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span id="theme-name">theme</span></button>
+      <button type="button" class="tb-btn" id="theme-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu" title="Terminal theme"><span class="sw" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span id="theme-name" class="tb-label">theme</span></button>
       <ul class="theme-menu" id="theme-menu" role="listbox" aria-label="Terminal theme" tabindex="-1" hidden></ul>
     </div>
     <a class="tb-link" href="https://github.com/CinematicGenius007/dredge" rel="noopener">source<svg><use href="#i-ext"/></svg></a>
@@ -117,7 +117,7 @@
   <main class="out" id="out" tabindex="-1">
     <div class="boot">
       <h1 class="line"><b>dredge</b> <span class="f">v0.2.0</span> <span class="d">·</span> where did your disk go?</h1>
-      <p class="line f">A read-only disk explorer for macOS, Linux and Windows. It reads your disk once, saves a snapshot,<br>and answers in one screen: what is big, what rebuilds itself, and the command to clear it.<br>It never deletes anything. It also runs as an MCP server for Claude and other agents.</p>
+      <p class="line f">A read-only disk explorer for macOS, Linux and Windows. It reads your disk once, saves a snapshot, <br>and answers in one screen: what is big, what rebuilds itself, and the command to clear it. <br>It never deletes anything. It also runs as an MCP server for Claude and other agents.</p>
 
       <div id="install"><pre class="line"><code>cargo install --git https://github.com/CinematicGenius007/dredge dredge-cli</code></pre></div>
 

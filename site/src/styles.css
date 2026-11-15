@@ -47,13 +47,12 @@ button { font: inherit; color: inherit; }
 
 /* The terminal is the page. */
 .term { position: fixed; inset: 10px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; grid-template-columns: minmax(0, 1fr); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 30px 90px -30px #0008; }
-@media (max-width: 640px) { .term { inset: 0; border: 0; border-radius: 0; } }
 
 .titlebar { display: flex; align-items: center; gap: 12px; padding: 0 8px 0 12px; height: 34px; border-bottom: 1px solid var(--line); background: var(--chrome); color: var(--dim); font-size: 12px; user-select: none; }
 .lights { display: flex; gap: 7px; width: 60px; }
 .lights i { width: 11px; height: 11px; border-radius: 50%; background: var(--line); }
 .title { flex: 1; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 520px) { .title { visibility: hidden; } }
+
 .themes { position: relative; }
 .tb-btn { display: inline-flex; align-items: center; gap: 7px; padding: 3px 8px; font-size: 12px; color: var(--faint); background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer; }
 .tb-btn:hover, .tb-btn[aria-expanded="true"] { color: var(--text); background: var(--panel); border-color: var(--line); }
@@ -269,3 +268,32 @@ body.lost-page { overflow: auto; }
 .lost a { color: var(--accent); }
 .lost .err { color: var(--err); }
 .lost .dim { color: var(--dim); }
+
+/* Phones: last, so it wins over the base rules above. */
+@media (max-width: 640px) {
+  .term { inset: 0 0 auto 0; height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
+  .lights { display: none; }
+  .titlebar { padding: 0 6px 0 14px; gap: 4px; }
+  .title { visibility: visible; text-align: left; }
+  .tb-label { display: none; }
+  .tb-btn { padding: 8px 9px; }
+  .tb-link { width: auto; padding: 6px 8px; }
+  .theme-menu { position: fixed; top: 40px; left: 8px; right: 8px; width: auto; max-height: 70dvh; }
+  .theme-menu li { padding: 9px 8px; }
+  .boot br { display: none; }
+  .boot > * + * { margin-top: 12px; }
+  .grid-out .b10 { display: none; }
+  .xc-cmd { white-space: normal; overflow-wrap: anywhere; }
+  .xc-code { white-space: normal; }
+  .tok { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .xc-note { white-space: normal; }
+  .xc-seg button { padding: 5px 10px; font-size: 12px; }
+  .xc-copy { padding: 6px 10px; }
+  .chips { gap: 8px; padding: 8px 0; }
+  .chips button { padding: 6px 12px; font-size: 13px; }
+  .run:not(:last-child), .boot:has(+ #log .run) { opacity: .4; }
+  .status { gap: 8px; }
+  .sess { padding: 0 10px; }
+  .wins a { padding: 1px 6px; }
+  .wins a b { display: none; }
+}

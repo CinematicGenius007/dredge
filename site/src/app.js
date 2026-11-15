@@ -228,7 +228,7 @@ function explain(c, i) {
   const tok = toks[i];
   tok.scrollIntoView({ block: "nearest", inline: "nearest" });
   const body = c.querySelector(".xc-body").getBoundingClientRect(), r = tok.getBoundingClientRect();
-  const x = Math.max(0, Math.min(r.left - body.left - 14 + Math.min(r.width / 2, 12), body.width * 0.55));
+  const x = Math.max(0, Math.min(r.left - body.left - 14 + Math.min(r.width / 2, 12), body.width - 300, body.width * 0.55));
   note.style.paddingLeft = `${x}px`;
   note.querySelector(".arm").textContent = "└─";
   note.querySelector(".what").textContent = v.parts[i][1];
@@ -537,6 +537,19 @@ const pick = document.getElementById("pick");
 // the top. Earlier commands stay above it (scroll up to see them), dimmed.
 new ResizeObserver(() => { out.style.setProperty("--screen", `${out.clientHeight}px`); o.scroll(); }).observe(out);
 for (const ev of ["wheel", "touchstart"]) out.addEventListener(ev, () => { cancelAnimationFrame(o.glide); o.glide = 0; }, { passive: true });
+// Phones: keep the prompt above the on-screen keyboard by sizing the terminal to the
+// visible viewport.
+const NARROW = matchMedia("(max-width: 640px)");
+if (window.visualViewport) {
+  const fit = () => {
+    if (!NARROW.matches) { term.style.height = ""; return; }
+    term.style.height = `${visualViewport.height}px`;
+    window.scrollTo(0, 0);
+  };
+  visualViewport.addEventListener("resize", fit);
+  NARROW.addEventListener("change", fit);
+  fit();
+}
 const o = {
   run: null,
   wait: (ms) => new Promise((r) => setTimeout(r, REDUCED ? 0 : ms)),
@@ -583,7 +596,8 @@ const comment = (t) => o.line(esc(`# ${t}`), "d");
 // ---- tutorial ------------------------------------------------------------------------------
 
 const pad = (s, n) => String(s).padStart(n);
-const bar10 = (f) => { const on = Math.max(f > 0 ? 1 : 0, Math.round(f * 10)); return `<span class="on">${"━".repeat(on)}</span><span class="off">${"─".repeat(10 - on)}</span>`; };
+const bar10 = (f) => { const on = Math.max(f > 0 ? 1 : 0, Math.round(f * 10)); return `<span class="b10"><span class="on">${"━".repeat(on)}</span><span class="off">${"─".repeat(10 - on)}</span>  </span>`; };
+const GRID_HEAD = `${sp("d", "      SIZE   SHARE  ")}<span class="b10">            </span>${sp("d", "NAME")}`;
 
 const STEPS = [
   {
@@ -625,8 +639,8 @@ const STEPS = [
       o.line(`${sp("b", "455.6 GiB")} in ${sp("f", "~/")} · 14 items, largest first`);
       await o.wait(30);
       o.html(`<pre class="grid-out">${[
-        sp("d", "      SIZE   SHARE              NAME"),
-        ...rows.map(([g, n]) => `${pad(g.toFixed(1), 6)} GiB  ${pad(((g / 455.6) * 100).toFixed(1), 5)}%  ${bar10(g / 455.6)}  ${sp("f", "~/")}${esc(n)}`),
+        GRID_HEAD,
+        ...rows.map(([g, n]) => `${pad(g.toFixed(1), 6)} GiB  ${pad(((g / 455.6) * 100).toFixed(1), 5)}%  ${bar10(g / 455.6)}${sp("f", "~/")}${esc(n)}`),
         sp("f", "+ 7 more · 18.3 GiB"),
       ].join("\n")}</pre>`);
       await o.lines([sp("f", "snapshot 2 min old"), next("dredge browse ~/Projects", "go into the largest folder")]);
@@ -820,7 +834,7 @@ function chips() {
     list.push({ cmd: "tutorial", primary: true }, { cmd: "demo" }, { cmd: "mcp" }, { cmd: "install" }, { cmd: "help" });
   }
   chipsEl.innerHTML = list.map((c) => `<button type="button" class="${c.primary ? "primary" : ""}" data-run="${esc(c.cmd)}">${c.primary ? "<kbd>↵</kbd>" : ""}${esc(c.cmd)}</button>`).join("");
-  input.placeholder = list[0].primary ? `press ↵ to run ${list[0].cmd.length > 34 ? list[0].cmd.slice(0, 32) + "…" : list[0].cmd}` : "";
+  input.placeholder = !list[0].primary ? "" : NARROW.matches ? "type a command, or press ↵" : `press ↵ to run ${list[0].cmd.length > 34 ? list[0].cmd.slice(0, 32) + "…" : list[0].cmd}`;
 }
 
 // ---- input ---------------------------------------------------------------------------------
@@ -921,8 +935,8 @@ const demo = (() => {
     const shown = r.kids.slice(0, 8), more = r.kids.slice(8);
     o.line(`${sp("b", human(r.bytes))} in ${sp("f", r.name + "/")} · ${r.kids.length} items, largest first`);
     o.html(`<pre class="grid-out">${[
-      sp("d", "      SIZE   SHARE              NAME"),
-      ...shown.map((k) => `${pad(human(k.bytes), 10)}  ${pad(((k.bytes / total) * 100).toFixed(1), 5)}%  ${bar10(k.bytes / total)}  ${k.loose ? sp("f", k.name) : sp("f", r.name + "/") + esc(k.name)}`),
+      GRID_HEAD,
+      ...shown.map((k) => `${pad(human(k.bytes), 10)}  ${pad(((k.bytes / total) * 100).toFixed(1), 5)}%  ${bar10(k.bytes / total)}${k.loose ? sp("f", k.name) : sp("f", r.name + "/") + esc(k.name)}`),
       ...(more.length ? [sp("f", `+ ${more.length} more · ${human(more.reduce((a, k) => a + k.bytes, 0))}`)] : []),
     ].join("\n")}</pre>`);
 
