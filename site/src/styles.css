@@ -231,6 +231,7 @@ pre.xc-code code { display: block; width: max-content; min-width: 100%; }
 .chips button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; font-size: 12.5px; color: var(--faint); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; cursor: pointer; white-space: nowrap; }
 .chips button:hover { color: var(--text); border-color: var(--line-2); }
 .chips button.primary { color: var(--bg); background: var(--text); border-color: var(--text); }
+.chips .more, .chips .brk, .chips .pn { display: none; }
 .chips kbd { font: inherit; font-size: 11px; padding: 0 5px; border: 1px solid var(--line-2); border-radius: 4px; color: var(--faint); }
 .chips button.primary kbd { color: var(--bg); border-color: color-mix(in srgb, var(--bg) 45%, transparent); }
 .input-row { display: flex; align-items: center; gap: 10px; }
@@ -289,11 +290,20 @@ body.lost-page { overflow: auto; }
   .xc-note { white-space: normal; }
   .xc-seg button { padding: 5px 10px; font-size: 12px; }
   .xc-copy { padding: 6px 10px; }
-  .chips { gap: 8px; padding: 8px 0; }
-  .chips button { padding: 6px 12px; font-size: 13px; }
+  /* Phones: one big next-step button, the rest behind "more". */
+  .chips { flex-wrap: wrap; overflow: visible; gap: 8px; padding: 10px 0 6px; }
+  .chips button { justify-content: center; min-height: 44px; padding: 0 14px; font-size: 14px; border-radius: 10px; }
+  .chips .alt { display: none; order: -2; flex: 1 1 calc(50% - 4px); }
+  .chips .brk { order: -1; }
+  .chips.open .alt { display: inline-flex; }
+  .chips.open .brk { display: block; flex-basis: 100%; height: 0; }
+  .chips .primary { flex: 1 1 0; min-width: 0; justify-content: flex-start; }
+  .chips .pc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+  .chips .pn { display: inline; flex: none; font-size: 12px; opacity: .6; }
+  .chips .more { display: inline-flex; flex: none; width: 64px; }
+  .chips.open .more { color: var(--text); border-color: var(--line-2); }
+  .input-row { padding: 2px 2px 0; }
+  .ps1 { font-size: 14px; }
+  .status { display: none; }
   .run:not(:last-child), .boot:has(+ #log .run) { opacity: .4; }
-  .status { gap: 8px; }
-  .sess { padding: 0 10px; }
-  .wins a { padding: 1px 6px; }
-  .wins a b { display: none; }
 }

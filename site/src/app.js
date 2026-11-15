@@ -833,8 +833,13 @@ function chips() {
   } else {
     list.push({ cmd: "tutorial", primary: true }, { cmd: "demo" }, { cmd: "mcp" }, { cmd: "install" }, { cmd: "help" });
   }
-  chipsEl.innerHTML = list.map((c) => `<button type="button" class="${c.primary ? "primary" : ""}" data-run="${esc(c.cmd)}">${c.primary ? "<kbd>↵</kbd>" : ""}${esc(c.cmd)}</button>`).join("");
-  input.placeholder = !list[0].primary ? "" : NARROW.matches ? "type a command, or press ↵" : `press ↵ to run ${list[0].cmd.length > 34 ? list[0].cmd.slice(0, 32) + "…" : list[0].cmd}`;
+  const n = step >= 0 && done.size < STEPS.length ? `<span class="pn">${Math.min(step + 1, STEPS.length)}/${STEPS.length}</span>` : "";
+  chipsEl.classList.remove("open");
+  chipsEl.innerHTML = list.map((c) => c.primary
+    ? `<button type="button" class="primary" data-run="${esc(c.cmd)}"><kbd>↵</kbd><span class="pc">${esc(c.cmd)}</span>${n}</button>`
+    : `<button type="button" class="alt" data-run="${esc(c.cmd)}">${esc(c.cmd)}</button>`).join("") +
+    `<i class="brk" aria-hidden="true"></i><button type="button" class="more" aria-expanded="false" aria-label="More commands">more</button>`;
+  input.placeholder = !list[0].primary ? "" : NARROW.matches ? "or type a command" : `press ↵ to run ${list[0].cmd.length > 34 ? list[0].cmd.slice(0, 32) + "…" : list[0].cmd}`;
 }
 
 // ---- input ---------------------------------------------------------------------------------
@@ -845,6 +850,14 @@ form.addEventListener("submit", (e) => {
   if (v) return exec(v, { typed: true });
   const first = chipsEl.querySelector(".primary");
   if (first) exec(first.dataset.run);
+});
+chipsEl.addEventListener("click", (e) => {
+  const b = e.target.closest(".more");
+  if (!b) return;
+  const open = chipsEl.classList.toggle("open");
+  b.setAttribute("aria-expanded", String(open));
+  b.textContent = open ? "less" : "more";
+  o.scroll();
 });
 document.addEventListener("click", (e) => {
   const r = e.target.closest("[data-run]");
