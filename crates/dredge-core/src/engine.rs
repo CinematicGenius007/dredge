@@ -858,10 +858,8 @@ impl Engine {
         });
 
         let data_path = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-        let volume = volumes::list()
-            .into_iter()
-            .filter(|v| data_path.starts_with(&v.mount))
-            .max_by_key(|v| v.mount.len());
+        let volume =
+            volumes::containing(volumes::list(), &data_path.to_string_lossy(), cfg!(windows));
         if let Some(v) = volume {
             records.push(DoctorRecord {
                 check: "disk_free".into(),
