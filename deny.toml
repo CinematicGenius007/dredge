@@ -1,6 +1,9 @@
 [advisories]
 # Reject every advisory; dependencies are upgraded instead of suppressing advisories.
-ignore = []
+# Exception: RUSTSEC-2026-0543 (chrono unmaintained, all versions affected, no patched release).
+# chrono is only reached through rmcp's hard schemars "chrono04" feature (still present in rmcp
+# 3.11), so we cannot drop it. It is unused by dredge code. Remove this once rmcp stops needing it.
+ignore = ["RUSTSEC-2026-0543"]
 
 [licenses]
 allow = [
